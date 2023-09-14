@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, get_args
 
 import numpy as np
 from pydantic import TypeAdapter
-from zhinst.toolkit.helpers import Waveform
+from .zhinst.waveform import Waveform
 
 from quantify_scheduler import enums
 from quantify_scheduler.backends.corrections import (
