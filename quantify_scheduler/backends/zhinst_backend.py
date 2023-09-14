@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, 
 
 import numpy as np
 from pydantic.v1 import parse_obj_as
-from zhinst.toolkit.helpers import Waveform
+from .zhinst.waveform import Waveform
 
 from quantify_scheduler import enums
 from quantify_scheduler.backends.corrections import (
