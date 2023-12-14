@@ -1,56 +1,101 @@
 # Changelog
 
-## Unreleased
+## 0.18.0 (2023-12-14)
+
+### Release highlights
+
+**Qblox Updates:**
+- Square pulses now support complex value pulses.
+- Marker pulse functionality corrected on RF modules.
+
+**General Enhancements:**
+- Numerous improvements to hardware compilation configuration:
+  - Introduced `Connectivity` data structure for mapping connections between quantum device ports and control hardware in `HardwareCompilationConfig`.
+  - Integration of third-party instruments via custom compilation nodes in hardware backends.
+  - Improved `Connectivity` to include one-to-many, many-to-one, and many-to-many connection capabilities.
 
 ### Breaking changes
 
-- Compilation - Changes to the `CompilationConfig` generation in the `QuantumDevice` to support parsing custom (backend-specific) `HardwareCompilationConfig` datastructures. (!840)
+- Compilation 
+  - Changes to the `CompilationConfig` generation in the `QuantumDevice` to support parsing custom (backend-specific) `HardwareCompilationConfig` datastructures. (!840)
   - The `backend` field in the `HardwareCompilationConfig` was replaced by the `config_type` field, which contains a (string) reference to the backend-specific `HardwareCompilationConfig` datastructure.
   - The `backend` field was removed from the `DeviceCompilationConfig`.
   - The `compilation_passes` field was moved from the `SerialCompilationConfig` into the `DeviceCompilationConfig` and `HardwareCompilationConfig` datastructures.
   - Migration:
     - `DeviceCompilationConfig`: If you are loading a stored `DeviceCompilationConfig` (instead of relying on the device config generation of the `QuantumDevice`), remove the `"backend"` key.
-    - `HardwareCompilatonConfig`: If you are already using the new-style `HardwareCompilatonConfig`, change the `"backend"` key to `"config_type"`.
+    - `HardwareCompilationConfig`: If you are already using the new-style `HardwareCompilationConfig`, change the `"backend"` key to `"config_type"`.
       - For Qblox: `"config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig"`,
       - For Zurich Instruments: `"config_type": "quantify_scheduler.backends.zhinst_backend.ZIHardwareCompilationConfig"`.
-- Schedulables - Rename `Schedulable["operation_repr"]` to `Schedulable["operation_id"]` (!775, #438)
-- Qblox ICCs - Fix to allow running `ScheduleGettable` with option `always_initialize=False`. (!868)
-  - Arming the sequencers is now done via `InstrumentCoordinator.start()` instead of `InstrumentCoordinator.prepare()`.
-- Pulses - The phase argument for `SquarePulse` has been removed. (!867)
+
+- Schedulables 
+  - Rename `Schedulable["operation_repr"]` to `Schedulable["operation_id"]` (!775, #438)
+
+- Qblox ICCs 
+  - Fix to allow running `ScheduleGettable` with option `always_initialize=False`. (!868)
+    - Arming the sequencers is now done via `InstrumentCoordinator.start()` instead of `InstrumentCoordinator.prepare()`.
+
+- Pulses 
+  - The phase argument for `SquarePulse` has been removed. (!867)
 
 ### Merged branches and closed issues
 
-- Qblox backend - Refactor (no functional changes) of I/O related logic. (!759)
-  - Move to/rename helpers in `StaticHardwareProperties`:
-    - `get_io_info` => `_get_io_mode`,
-    - `output_name_to_output_indices` + `input_name_to_input_indices` => `io_name_to_connected_io_indices`,
-    - `output_map` => `io_name_to_digital_marker`.
-  - Rename properties in `Sequencer`:
-    - `connected_outputs` => `connected_output_indices`,
-    - `connected_inputs` => `connected_input_indices`.
-  - Substitute `io_mode` string literals by `ChannelMode` enums.
-- Qblox backend - Fix `MarkerPulse` playback on QRM-RF and QCM-RF. (!828)
-  - Marker bit index values for addressing outputs need to be swapped on QCM-RF, not QRM-RF (done via `MarkerPulseStrategy._fix_marker_bit_output_addressing_qcm_rf`).
-- Compilation - Implement Connectivity datastructure for specifying connections between ports on the quantum device and on the control hardware in the `HardwareCompilationConfig`. (!734)
-- Compilation - Allow additional third-party instruments with custom compilation nodes in hardware backends. (!837)
-- Compilation - Allow specifying one-to-many, many-to-one, and many-to-many connections in the `Connectivity`. (!841)
-- Compilation - Improve errors and warnings when compiling subschedules and/or loops. (!847)
-- Compilation - Add helper functions and validators to convert old-style hardware config dicts to new-style `HardwareCompilationConfig` datastructures. (!843)
-- Schedules - Prevent FutureWarning when creating `Schedule.timing_table` and sort by `abs_time`. (!852) 
-- Documentation - Moved all `__init__` docstrings to class description and minor docstring changes. (!785)
-- QuantumDevice - Store element and edge instrument references in quantum device. (!855, #442)
-- Infrastructure - Performance profiling: ability to run profiling via the CI pipeline and manually in a notebook. (!854)
-- Operations - Make `staircase_pulse`, `long_square_pulse` and `long_ramp_pulse` compatible with use in control flow on Qblox hardware. (!857)
-  - End on a pulse with 0 voltage offset, to remove 4ns timing mismatch when they are used in control flow.
-- Qblox backend - Fixes for waveform gain/offset instructions and optimization with waveform uploading. (!860)
-- Documentation - Add a warning banner to documentation when on an old or development version of quantify. (!864)
-- Documentation - Improve formatting by replacing single backticks with double backticks where needed. (!866)
-- Qblox backend - Temporary fix for reshaping of acquisition data of looped measurements in `BinMode.APPEND`. (!850)
-- Compilation - Allow `MarkerPulse`s to be appended to other operations. (!867)
-- Infrastructure - New test notebook for performance tests. (!862)
-- Qblox backend - Remove "imag" sequencer mode from qblox backend, rename `io_name` to `channel_name` and `path0`/`path1` to `path_I`/`path_Q`. (!870)
-- Subscheduling - Fix missing resources in nested schedule. (!877)
-- Acquisition - Add `acq_channel` argument to `Measure` operation and make `acq_channel` device element accept hashable types. (!869)
+- Qblox backend
+  - Refactors (!759, !870)
+    - Move to/rename helpers in `StaticHardwareProperties`:
+      - `get_io_info` => `_get_io_mode`,
+      - `output_name_to_output_indices` + `input_name_to_input_indices` => `io_name_to_connected_io_indices`,
+      - `output_map` => `io_name_to_digital_marker`.
+    - Rename properties in `Sequencer`:
+      - `connected_outputs` => `connected_output_indices`,
+      - `connected_inputs` => `connected_input_indices`.
+    - Substitute `io_mode` string literals by `ChannelMode` enums.
+    - Remove "imag" sequencer mode from Qblox backend, rename `io_name` to `channel_name` and `path0`/`path1` to `path_I`/`path_Q`. (!870)
+  - Bugfixes
+    - Fix `MarkerPulse` playback on QRM-RF and QCM-RF. (!828)
+      - Marker bit index values for addressing outputs need to be swapped on QCM-RF, not QRM-RF (done via `MarkerPulseStrategy._fix_marker_bit_output_addressing_qcm_rf`).
+    - Fix for waveform gain/offset instructions and optimization with waveform uploading. (!860)
+    - Fix (temporary) for reshaping of acquisition data of looped measurements in `BinMode.APPEND`. (!850)
+  
+- Compilation
+  - Implement `Connectivity` datastructure for specifying connections between ports on the quantum device and on the control hardware in the `HardwareCompilationConfig`. (!734)
+  - Allow additional third-party instruments with custom compilation nodes in hardware backends. (!837)
+  - Allow specifying one-to-many, many-to-one, and many-to-many connections in the `Connectivity`. (!841)
+  - Improve errors and warnings when compiling subschedules and/or loops. (!847)
+  - Add helper functions and validators to convert old-style hardware config dicts to new-style `HardwareCompilationConfig` datastructures. (!843)
+  - Allow `MarkerPulse`s to be appended to other operations. (!867)
+
+- Schedules 
+  - Prevent `FutureWarning` when creating `Schedule.timing_table` and sort by `abs_time`. (!852) 
+  - Fix missing resources in nested schedule. (!877)
+
+- QuantumDevice
+  - Store element and edge instrument references in `QuantumDevice`. (!855, #442)
+
+- Infrastructure
+  - Add ability to run profiling via the CI pipeline and manually in a notebook. (!854)
+  - Add new test notebook for performance tests. (!862)
+
+- Operations 
+  - Make `staircase_pulse`, `long_square_pulse` and `long_ramp_pulse` compatible with use in control flow on Qblox hardware. These now end on a pulse with 0 voltage offset, to remove 4ns timing mismatch when they are used in control flow. (!857)
+  - Add `acq_channel` argument to `Measure` operation and make `acq_channel` device element accept hashable types. (!869)
+
+- Documentation 
+  - Move all `__init__` docstrings to class description and minor docstring changes. (!785)
+  - Add a warning banner to documentation when on an old or on a development version of quantify. (!864)
+  - Improve formatting by replacing single backticks with double backticks where needed. (!866)
+
+### Compatibility info
+
+**Qblox**
+
+| quantify-scheduler |                      qblox-instruments                       |                               Cluster firmware                                |
+|--------------------|:------------------------------------------------------------:|:-----------------------------------------------------------------------------:|
+| v0.18.0            | [0.11.2](https://pypi.org/project/qblox-instruments/0.11.2/) | [0.6.2](https://gitlab.com/qblox/releases/cluster_releases/-/releases/v0.6.2) |
+|                    | [0.11.1](https://pypi.org/project/qblox-instruments/0.11.1/) | [0.6.1](https://gitlab.com/qblox/releases/cluster_releases/-/releases/v0.6.1) |
+|                    | [0.11.0](https://pypi.org/project/qblox-instruments/0.11.0/) | [0.6.0](https://gitlab.com/qblox/releases/cluster_releases/-/releases/v0.6.0) |
+
+**Zurich Instruments**
+- `zhinst==21.8.20515`, `zhinst-qcodes==0.1.4`, `zhinst-toolkit==0.1.5`
 
 ## 0.17.1 (2023-11-02)
 
