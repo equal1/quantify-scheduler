@@ -41,7 +41,7 @@
   - Modify the parameters of the `VoltageOffset` operation (please also note below that this operation is moved). (!863)
   - Deprecate the `duration` parameter. The duration of a `VoltageOffset` is always 0. (!863)
   - Make the `port` parameter non-optional, and the `clock` parameter by default `BasebandClockResource.IDENTITY`. (!863)
-  - N.B., this changes the order of the arguments. The correct signature is now `VoltageOffset(offset_path_0, offset_path_1, port, clock=BasebandClockResource. IDENTITY, t0=0, reference_magnitude=None)`. Using the `duration` parameter reults in a `FutureWarning`. (!863)
+  - N.B., this changes the order of the arguments. The correct signature is now `VoltageOffset(offset_path_0, offset_path_1, port, clock=BasebandClockResource. IDENTITY, t0=0, reference_magnitude=None)`. Using the `duration` parameter results in a `FutureWarning`. (!863)
   - Move `VoltageOffset` from `quantify_scheduler.operations.pulse_library` to `quantify_scheduler.backends.qblox.operations.pulse_library`. (!863)
   - Move `quantify_scheduler.operations.stitched_pulse` to `quantify_scheduler.backends.qblox.operations.stitched_pulse`. (!863)
   - Move `staircase_pulse`, `long_square_pulse` and `long_ramp_pulse` from `quantify_scheduler.operations.pulse_factories` to `quantify_scheduler.backends.qblox.operations.pulse_factories`. (!863)
