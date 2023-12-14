@@ -1,5 +1,25 @@
 # Recent interface changes
 
+## 0.18.0: 
+
+- Compilation 
+  - The `backend` field in the `HardwareCompilationConfig` was replaced by the `config_type` field, which contains a (string) reference to the backend-specific `HardwareCompilationConfig` datastructure.
+  - The `backend` field was removed from the `DeviceCompilationConfig`.
+  - The `compilation_passes` field was moved from the `SerialCompilationConfig` into the `DeviceCompilationConfig` and `HardwareCompilationConfig` datastructures.
+  - How to migrate:
+    - `DeviceCompilationConfig`: If you are loading a stored `DeviceCompilationConfig` (instead of relying on the device config generation of the `QuantumDevice`), remove the `"backend"` key.
+    - `HardwareCompilationConfig`: If you are already using the new-style `HardwareCompilationConfig`, change the `"backend"` key to `"config_type"`:
+      -  `"config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig"`
+
+- Schedulables 
+  - Rename `Schedulable["operation_repr"]` to `Schedulable["operation_id"]`
+
+- InstrumentCoordinator 
+  - Arming the sequencers is now done via `InstrumentCoordinator.start()` instead of `InstrumentCoordinator.prepare()`.
+
+- Pulses 
+  - The phase argument for `SquarePulse` has been removed.
+
 ## 0.15.0: HardwareCompilationConfig structure
 
 The {class}`~.backends.types.common.HardwareCompilationConfig` datastructure was introduced to structure the information that was previously stored in the hardware configuration dict.
