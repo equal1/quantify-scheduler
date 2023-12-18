@@ -1,7 +1,9 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
 """
-Device elements for NV centers. Currently only for the electronic qubit,
+Device elements for NV centers.
+
+Currently only for the electronic qubit,
 but could be extended for other qubits (eg. carbon qubit).
 """
 import math
@@ -23,6 +25,7 @@ from quantify_scheduler.helpers.validators import (
     _Amplitudes,
     _NonNegativeFrequencies,
     _Delays,
+    _Hashable,
 )
 from quantify_scheduler.device_under_test.device_element import DeviceElement
 from quantify_scheduler.operations import (
@@ -34,9 +37,7 @@ from quantify_scheduler.operations import (
 
 # pylint: disable=too-few-public-methods
 class Ports(InstrumentModule):
-    """
-    Submodule containing the ports.
-    """
+    """Submodule containing the ports."""
 
     def __init__(self, parent: InstrumentBase, name: str, **kwargs: Any) -> None:
         super().__init__(parent=parent, name=name)
@@ -74,9 +75,7 @@ class Ports(InstrumentModule):
 
 # pylint: disable=too-few-public-methods
 class ClockFrequencies(InstrumentModule):
-    """
-    Submodule with clock frequencies specifying the transitions to address.
-    """
+    """Submodule with clock frequencies specifying the transitions to address."""
 
     def __init__(self, parent: InstrumentBase, name: str, **kwargs: Any) -> None:
         super().__init__(parent=parent, name=name)
@@ -139,8 +138,11 @@ class ClockFrequencies(InstrumentModule):
 
 # pylint: disable=too-few-public-methods
 class SpectroscopyOperationHermiteMW(InstrumentModule):
-    """Submodule with parameters to convert the SpectroscopyOperation into a hermite
-    microwave pulse with a certain amplitude and duration for spin-state manipulation.
+    """
+    Convert the SpectroscopyOperation into a hermite microwave pulse.
+
+    This class contains parameters with a certain amplitude and duration for
+    spin-state manipulation.
 
     The modulation frequency of the pulse is determined by the clock ``spec`` in
     :class:`~.ClockFrequencies`.
@@ -172,8 +174,9 @@ class SpectroscopyOperationHermiteMW(InstrumentModule):
 
 class ResetSpinpump(InstrumentModule):
     r"""
-    Submodule containing parameters to run the spinpump laser with a square pulse
-    to reset the NV to the :math:`|0\rangle` state.
+    Submodule containing parameters to run the spinpump laser with a square pulse.
+
+    This should reset the NV to the :math:`|0\rangle` state.
     """
 
     def __init__(self, parent: InstrumentBase, name: str, **kwargs: Any) -> None:
@@ -199,7 +202,8 @@ class ResetSpinpump(InstrumentModule):
 
 
 class Measure(InstrumentModule):
-    r"""Submodule containing parameters to read out the spin state of the NV center.
+    r"""
+    Submodule containing parameters to read out the spin state of the NV center.
 
     Excitation with a readout laser from the :math:`|0\rangle` to an excited state.
     Acquisition of photons when decaying back into the :math:`|0\rangle` state.
@@ -252,8 +256,8 @@ class Measure(InstrumentModule):
             name="acq_channel",
             instrument=self,
             initial_value=0,
-            unit="#",
-            vals=validators.Ints(min_value=0),
+            unit="",
+            vals=_Hashable(),
         )
         """
         Acquisition channel of this device element.
@@ -262,8 +266,9 @@ class Measure(InstrumentModule):
 
 class ChargeReset(InstrumentModule):
     """
-    Submodule containing parameters to run an ionization laser square pulse to reset the NV in
-    its negatively charged state.
+    Submodule containing parameters to run an ionization laser square pulse to reset the NV.
+
+    After resetting, the qubit should be in its negatively charged state.
     """
 
     def __init__(self, parent: InstrumentBase, name: str, **kwargs: Any) -> None:
@@ -290,8 +295,9 @@ class ChargeReset(InstrumentModule):
 
 class CRCount(InstrumentModule):
     """
-    Submodule containing parameters to run the ionization laser and the spin pump laser
-    with a photon count to perform a charge and resonance count.
+    Submodule containing parameters to run the ionization laser and the spin pump laser.
+
+    This uses a photon count to perform a charge and resonance count.
     """
 
     def __init__(self, parent: InstrumentBase, name: str, **kwargs: Any) -> None:
@@ -359,11 +365,11 @@ class CRCount(InstrumentModule):
             name="acq_channel",
             instrument=self,
             initial_value=0,
-            unit="#",
-            vals=validators.Ints(min_value=0),
+            unit="",
+            vals=_Hashable(),
         )
         """
-        Acquisition channel of this device element.
+        Default acquisition channel of this device element.
         """
 
 
@@ -405,7 +411,7 @@ class BasicElectronicNVElement(DeviceElement):
 
     def _generate_config(self) -> Dict[str, Dict[str, OperationCompilationConfig]]:
         """
-        Generates part of the device configuration specific to a single qubit.
+        Generate part of the device configuration specific to a single qubit.
 
         This method is intended to be used when this object is part of a
         device object containing multiple elements.
@@ -454,7 +460,12 @@ class BasicElectronicNVElement(DeviceElement):
                         "pulse_type": "SquarePulse",
                         "acq_protocol_default": "TriggerCount",
                     },
-                    gate_info_factory_kwargs=["acq_index", "bin_mode", "acq_protocol"],
+                    gate_info_factory_kwargs=[
+                        "acq_channel_override",
+                        "acq_index",
+                        "bin_mode",
+                        "acq_protocol",
+                    ],
                 ),
                 "cr_count": OperationCompilationConfig(
                     factory_func=measurement_factories.optical_measurement,
@@ -483,7 +494,12 @@ class BasicElectronicNVElement(DeviceElement):
                         "pulse_type": "SquarePulse",
                         "acq_protocol_default": "TriggerCount",
                     },
-                    gate_info_factory_kwargs=["acq_index", "bin_mode", "acq_protocol"],
+                    gate_info_factory_kwargs=[
+                        "acq_channel_override",
+                        "acq_index",
+                        "bin_mode",
+                        "acq_protocol",
+                    ],
                 ),
             }
         }
@@ -491,8 +507,10 @@ class BasicElectronicNVElement(DeviceElement):
 
     def generate_device_config(self) -> DeviceCompilationConfig:
         """
-        Generates a valid device config for the quantify-scheduler making use of the
-        :func:`~.circuit_to_device._compile_circuit_to_device` function.
+        Generate a valid device config for the quantify-scheduler.
+
+        This makes use of the
+        :func:`~.circuit_to_device.compile_circuit_to_device` function.
 
         This enables the settings of this qubit to be used in isolation.
 
@@ -501,8 +519,6 @@ class BasicElectronicNVElement(DeviceElement):
             This config is only valid for single qubit experiments.
         """
         cfg_dict = {
-            "backend": "quantify_scheduler.backends"
-            ".circuit_to_device._compile_circuit_to_device",
             "elements": self._generate_config(),
             "clocks": {
                 f"{self.name}.f01": self.clock_freqs.f01(),

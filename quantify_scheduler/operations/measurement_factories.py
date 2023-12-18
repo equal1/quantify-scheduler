@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Hashable
 
 import numpy as np
 
@@ -39,7 +39,8 @@ def dispersive_measurement(
     clock: str,
     acq_duration: float,
     acq_delay: float,
-    acq_channel: int,
+    acq_channel: Hashable,
+    acq_channel_override: Hashable | None,
     acq_index: int,
     acq_protocol: Literal[
         "SSBIntegrationComplex",
@@ -107,6 +108,9 @@ def dispersive_measurement(
 
     if acq_protocol is None:
         acq_protocol = acq_protocol_default
+
+    if acq_channel_override is not None:
+        acq_channel = acq_channel_override
 
     if acq_protocol == "SSBIntegrationComplex":
         # readout pulse
@@ -194,7 +198,8 @@ def optical_measurement(
     acq_delay: float,
     acq_port: str,
     acq_clock: str,
-    acq_channel: int,
+    acq_channel: Hashable,
+    acq_channel_override: Hashable | None,
     acq_index: int,
     bin_mode: BinMode | None,
     acq_protocol: Literal["Trace", "TriggerCount"] | None,
@@ -202,7 +207,8 @@ def optical_measurement(
     pulse_type: Literal["SquarePulse"],
 ) -> Operation:
     # pylint: disable=too-many-locals
-    """Generator function for an optical measurement with multiple excitation pulses.
+    """
+    Generator function for an optical measurement with multiple excitation pulses.
 
     An optical measurement generates a square pulse in the optical range and uses
     either the Trace acquisition to return the output of a photon detector as a
@@ -234,7 +240,9 @@ def optical_measurement(
     acq_clock
         Clock name of the acquisition
     acq_channel
-        Acquisition channel of the device element
+        Default acquisition channel of the device element
+    acq_channel_override
+        Acquisition channel of the operation
     acq_index
         Acquisition index as defined in the Schedule
     bin_mode
@@ -263,7 +271,6 @@ def optical_measurement(
     NotImplementedError
         If an unknown ``pulse_type`` or ``acq_protocol`` are used.
     """
-
     # ensures default argument is used if not specified at gate level.
     # ideally, this input would not be accepted, but this is a workaround for #267
     if bin_mode is None:
@@ -313,6 +320,9 @@ def optical_measurement(
 
     if acq_protocol is None:
         acq_protocol = acq_protocol_default
+
+    if acq_channel_override is not None:
+        acq_channel = acq_channel_override
 
     if acq_protocol == "TriggerCount":
         device_op.add_acquisition(

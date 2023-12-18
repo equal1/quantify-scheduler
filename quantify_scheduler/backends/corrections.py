@@ -31,9 +31,8 @@ def determine_relative_latency_corrections(
     def _extract_port_clocks(hardware_cfg: Dict[str, Any]) -> Generator:
         """
         Extracts all port-clock combinations that are present in a hardware configuration.
-        Based on: https://stackoverflow.com/questions/9807634/find-all-occurrences-of-a-key-in-nested-dictionaries-and-lists
+        Based on: https://stackoverflow.com/questions/9807634/find-all-occurrences-of-a-key-in-nested-dictionaries-and-lists.
         """
-
         if hasattr(hardware_cfg, "items"):
             for k, v in hardware_cfg.items():
                 if k == "port":
@@ -63,7 +62,7 @@ def determine_relative_latency_corrections(
     # Subtract lowest value to ensure minimal latency is used and offset the latency
     # corrections to be relative to the minimum. Note that this supports negative delays
     # (which is useful for calibrating)
-    minimum_of_latency_corrections = min(latency_dict.values())
+    minimum_of_latency_corrections = min(latency_dict.values(), default=0)
     for port_clock, latency_at_port_clock in latency_dict.items():
         latency_dict[port_clock] = (
             latency_at_port_clock - minimum_of_latency_corrections
@@ -107,7 +106,6 @@ def distortion_correct_pulse(  # pylint: disable=too-many-arguments
     :
         The sampled, distortion corrected pulse wrapped in a ``NumericalPulse``.
     """
-
     waveform_data = generate_waveform_data(
         data_dict=pulse_data,
         sampling_rate=sampling_rate,
@@ -150,6 +148,7 @@ def apply_distortion_corrections(
 ) -> Schedule:
     """
     Apply distortion corrections to operations in the schedule.
+
     Defined via the hardware configuration file, example:
 
     .. code-block::
@@ -174,8 +173,8 @@ def apply_distortion_corrections(
     pulse. This means that we can have a combination of corrected (i.e., pre-sampled)
     and uncorrected pulses in the same operation.
 
-    Note that we are **not** updating the ``"operation_repr"`` key, used to reference
-    the operation from the schedulable.
+    Note that we are **not** updating the ``"operation_id"`` key, used to reference
+    the operation from schedulables.
 
     Parameters
     ----------
@@ -203,28 +202,27 @@ def apply_distortion_corrections(
     KeyError
         when clipping values are supplied but not two values exactly, min and max.
     """
-
     distortion_corrections_key = "distortion_corrections"
     if hardware_cfg.get(distortion_corrections_key) is None:
         logging.debug(f'No key "{distortion_corrections_key}" supplied in hardware_cfg')
         return schedule
 
-    for operation_repr in schedule.operations.keys():
+    for operation_id in schedule.operations.keys():
         substitute_operation = None
 
         for pulse_info_idx, pulse_data in enumerate(
-            schedule.operations[operation_repr].data["pulse_info"]
+            schedule.operations[operation_id].data["pulse_info"]
         ):
             portclock_key = f"{pulse_data['port']}-{pulse_data['clock']}"
 
             if portclock_key in hardware_cfg[distortion_corrections_key]:
-                if not _is_distortion_correctable(schedule.operations[operation_repr]):
+                if not _is_distortion_correctable(schedule.operations[operation_id]):
                     warnings.warn(
                         f"Schedule contains an operation, for which distortion "
                         f"correction is not implemented. Please either replace the "
                         f"operation, or omit the distortion correction setting for "
                         f"this port in order to suppress this warning. Offending "
-                        f"operation: {schedule.operations[operation_repr]}",
+                        f"operation: {schedule.operations[operation_id]}",
                         RuntimeWarning,
                     )
                     continue
@@ -261,7 +259,7 @@ def apply_distortion_corrections(
                     clipping_values=clipping_values,
                 )
 
-                schedule.operations[operation_repr].data["pulse_info"][
+                schedule.operations[operation_id].data["pulse_info"][
                     pulse_info_idx
                 ] = corrected_pulse.data["pulse_info"][0]
 
@@ -272,8 +270,8 @@ def apply_distortion_corrections(
         # required as first entry in pulse_info is used to generate signature in __str__
         if substitute_operation is not None:
             substitute_operation.data["pulse_info"] = schedule.operations[
-                operation_repr
+                operation_id
             ].data["pulse_info"]
-            schedule.operations[operation_repr] = substitute_operation
+            schedule.operations[operation_id] = substitute_operation
 
     return schedule

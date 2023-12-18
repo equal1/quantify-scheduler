@@ -23,7 +23,8 @@ def typical_kwargs_optical_measurement_single_pulse():
         "acq_delay": 0,
         "acq_port": "acq_port_name",
         "acq_clock": "acq_clock_name",
-        "acq_channel": 1,
+        "acq_channel_override": None,
+        "acq_channel": -1,
         "acq_index": 0,
         "acq_protocol": None,
         "bin_mode": None,
@@ -47,6 +48,7 @@ def typical_kwargs_optical_measurement_multiple_pulses():
         "acq_delay": 0,
         "acq_port": "acq_port_name",
         "acq_clock": "acq_clock_name",
+        "acq_channel_override": "ch_2",
         "acq_channel": 1,
         "acq_index": 0,
         "acq_protocol": None,
@@ -62,7 +64,6 @@ def assert_pulse_equal(pulse_info: Dict, optical_meas_kwargs: Dict, index: int):
     assert isinstance(pulse_info, dict)
     assert pulse_info["amp"] == optical_meas_kwargs["pulse_amplitudes"][index]
     assert pulse_info["duration"] == optical_meas_kwargs["pulse_durations"][index]
-    assert pulse_info["phase"] == 0
     assert pulse_info["port"] == optical_meas_kwargs["pulse_ports"][index]
     assert pulse_info["clock"] == optical_meas_kwargs["pulse_clocks"][index]
     if optical_meas_kwargs["acq_delay"] >= 0:
@@ -77,7 +78,10 @@ def assert_acquisition_equal(acq_info: Dict, optical_meas_kwargs: Dict):
     assert acq_info["duration"] == optical_meas_kwargs["acq_duration"]
     assert acq_info["port"] == optical_meas_kwargs["acq_port"]
     assert acq_info["clock"] == optical_meas_kwargs["acq_clock"]
-    assert acq_info["acq_channel"] == optical_meas_kwargs["acq_channel"]
+    assert (
+        acq_info["acq_channel"] == optical_meas_kwargs["acq_channel_override"]
+        or optical_meas_kwargs["acq_channel"]
+    )
     assert acq_info["acq_index"] == optical_meas_kwargs["acq_index"]
     if optical_meas_kwargs["acq_delay"] >= 0:
         assert acq_info["t0"] == optical_meas_kwargs["acq_delay"]

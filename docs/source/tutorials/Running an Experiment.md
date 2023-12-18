@@ -143,7 +143,7 @@ For more information on this datastructure, please refer to the explanation in t
 
 ```{code-cell} ipython3
 hardware_comp_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {
         f"{cluster.name}": {
             "instrument_type": "Cluster",
@@ -165,28 +165,10 @@ hardware_comp_cfg = {
         },
     },
     "connectivity": {
-        f"{cluster.name}": {
-            f"{cluster.module1.name}": {
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "port": "q0:res",
-                            "clock": "q0.ro",
-                        }
-                    ],
-                },
-            },
-            f"{cluster.module2.name}": {
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "port": "q0:mw",
-                            "clock": "q0.01",
-                        }
-                    ],
-                },
-            },
-        },
+        "graph": [
+            (f"{cluster.name}.{cluster.module1.name.split('_')[-1]}.complex_output_0", "q0:res"),
+            (f"{cluster.name}.{cluster.module2.name.split('_')[-1]}.complex_output_0", "q0:mw")
+        ]
     },
 }
 ```
@@ -194,10 +176,6 @@ hardware_comp_cfg = {
 ```{code-cell} ipython3
 # Tie hardware config to device
 single_qubit_device.hardware_config(hardware_comp_cfg)
-```
-
-```{note}
-The {class}`~.backends.types.common.Connectivity` datastructure is currently under development. Information on the connectivity between port-clock combinations on the quantum device and ports on the control hardware is currently included in the old-style hardware configuration file, which should be included in the `"connectivity"` field of the {class}`~.backends.types.common.HardwareCompilationConfig`.
 ```
 
 (create_schedule)=
@@ -329,7 +307,7 @@ processed in one batch.
 
 ```{admonition} Configuring MeasurementControl
 More information on configuring {class}`~quantify_core.measurement.control.MeasurementControl` can be found in the
-[user guide](https://quantify-os.org/docs/quantify-core/latest/user/concepts.html#measurement-control)
+[user guide](https://quantify-os.org/docs/quantify-core/dev/user/concepts.html#measurement-control)
 of `quantify-core`.
 ```
 
@@ -371,6 +349,6 @@ T1Analysis(dataset=dataset).run().display_figs_mpl()
 
 ```{admonition} Analyzing Datasets
 More information on analyzing datasets can be found in the [user guide](
-<https://quantify-os.org/docs/quantify-core/latest/user/concepts.html#analysis>)
+<https://quantify-os.org/docs/quantify-core/dev/user/concepts.html#analysis>)
 of `quantify-core`.
 ```

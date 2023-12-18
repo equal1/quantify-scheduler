@@ -1,8 +1,6 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
-"""
-Compilation backend for quantum-circuit to quantum-device layer.
-"""
+"""Compilation backend for quantum-circuit to quantum-device layer."""
 from __future__ import annotations
 
 import warnings
@@ -16,6 +14,7 @@ from quantify_scheduler.backends.graph_compilation import (
     DeviceCompilationConfig,
     OperationCompilationConfig,
 )
+from quantify_scheduler.backends.qblox.enums import ChannelMode
 from quantify_scheduler.operations.measurement_factories import dispersive_measurement
 from quantify_scheduler.operations.operation import Operation
 from quantify_scheduler.resources import ClockResource
@@ -35,7 +34,7 @@ def _compile_circuit_to_device(
 
     Before calling this function, the schedule can contain abstract operations (gates or
     measurements). This function adds pulse and acquisition information with respect to
-    `config` as they are expected to arrive to device (latency or distortion corrections
+    ``config`` as they are expected to arrive to device (latency or distortion corrections
     are not taken into account).
 
     From a point of view of :ref:`sec-compilation`, this function converts a schedule
@@ -52,18 +51,18 @@ def _compile_circuit_to_device(
         is used in this compilation step.
     device_cfg
         (deprecated) Device compilation config. Pass a full compilation config instead
-        using `config` argument. Note, if a dictionary is passed, it will be parsed to a
+        using ``config`` argument. Note, if a dictionary is passed, it will be parsed to a
         :class:`~.DeviceCompilationConfig`.
 
     Returns
     -------
     :
-        The modified `schedule` with pulse information added to all gates.
+        The modified ``schedule`` with pulse information added to all gates.
 
     Raises
     ------
     ValueError
-        When both `config` and `device_cfg` are supplied.
+        When both ``config`` and ``device_cfg`` are supplied.
     """
     if (config is not None) and (device_cfg is not None):
         raise ValueError(
@@ -91,6 +90,11 @@ def _compile_circuit_to_device(
         # but this is supported for backwards compatibility reasons.
         return schedule
     elif not isinstance(device_cfg, DeviceCompilationConfig):
+        if "backend" in device_cfg:
+            raise ValueError(
+                f"`{DeviceCompilationConfig.__name__}` no longer takes a"
+                f" 'backend' field; please remove it."
+            )
         device_cfg = DeviceCompilationConfig.model_validate(device_cfg)
 
     for key, operation in schedule.operations.items():
@@ -99,7 +103,9 @@ def _compile_circuit_to_device(
         # will not work here for e.g. Measure, which is also a valid
         # acquisition)
         if isinstance(operation, Schedule):
-            schedule.operations[key] = _compile_circuit_to_device(operation, device_cfg)
+            schedule.operations[key] = _compile_circuit_to_device(
+                schedule=operation, config=config
+            )
             continue
         elif not (operation.valid_pulse or operation.valid_acquisition):
             qubits = operation.data["gate_info"]["qubits"]
@@ -191,12 +197,13 @@ def set_pulse_and_acquisition_clock(
         is used in this compilation step.
     device_cfg
         (deprecated) Device compilation config. Pass a full compilation config instead
-        using `config` argument. Note, if a dictionary is passed, it will be parsed to a
+        using ``config`` argument. Note, if a dictionary is passed, it will be parsed to a
         :class:`~.DeviceCompilationConfig`.
+
     Returns
     -------
     :
-        The modified `schedule` with all clock resources added.
+        The modified ``schedule`` with all clock resources added.
 
     Warns
     -----
@@ -208,7 +215,7 @@ def set_pulse_and_acquisition_clock(
     RuntimeError
         When operation is not at pulse/acquisition-level.
     ValueError
-        When both `config` and `device_cfg` are supplied.
+        When both ``config`` and ``device_cfg`` are supplied.
     ValueError
         When clock frequency is unknown.
     ValueError
@@ -240,6 +247,11 @@ def set_pulse_and_acquisition_clock(
         # but this is supported for backwards compatibility reasons.
         return schedule
     elif not isinstance(device_cfg, DeviceCompilationConfig):
+        if "backend" in device_cfg:
+            raise ValueError(
+                f"`{DeviceCompilationConfig.__name__}` no longer takes a"
+                f" 'backend' field; please remove it."
+            )
         device_cfg = DeviceCompilationConfig.model_validate(device_cfg)
     assert isinstance(device_cfg, DeviceCompilationConfig)
 
@@ -257,8 +269,8 @@ def set_pulse_and_acquisition_clock(
             operation_info = operation["pulse_info"] + operation["acquisition_info"]
             clocks_used = set([info["clock"] for info in operation_info])
             for clock in clocks_used:
-                # In digital IO's clocks are non-existant, so we skip them.
-                if clock == "digital":
+                # In digital channels clocks are non-existant, so we skip them.
+                if clock == ChannelMode.DIGITAL:
                     continue
                 if clock in verified_clocks:
                     continue
@@ -278,7 +290,7 @@ def _update_acquisition_info_from_device_config(
     operation: dict[Any, Any], device_compilation_config: DeviceCompilationConfig
 ) -> None:
     """
-    Update an operation's `acquisition_info` from the device configuration.
+    Update an operation's ``acquisition_info`` from the device configuration.
 
     Parameters
     ----------
@@ -306,7 +318,8 @@ def _update_acquisition_info_from_device_config(
 
 
 def _valid_clock_in_schedule(clock, device_cfg, schedule, operation) -> bool:
-    """Asserts that valid clock is present. Returns whether clock is already in schedule.
+    """
+    Asserts that valid clock is present. Returns whether clock is already in schedule.
 
     Parameters
     ----------
@@ -325,7 +338,6 @@ def _valid_clock_in_schedule(clock, device_cfg, schedule, operation) -> bool:
         Returns ValueError if (i) the device config is the only defined clock and
         contains nan values or (ii) no clock is defined.
     """
-
     if clock in schedule.resources:
         if clock in device_cfg.clocks:
             # Test if clocks are compatible (emits a warning if not)
@@ -351,7 +363,8 @@ def _valid_clock_in_schedule(clock, device_cfg, schedule, operation) -> bool:
 
 
 def _clocks_compatible(clock, device_cfg: DeviceCompilationConfig, schedule) -> bool:
-    """Compare device config and schedule resources for compatibility of their clocks.
+    """
+    Compare device config and schedule resources for compatibility of their clocks.
 
     Clocks can be defined in the device_cfg and in the schedule. They are consistent if
 
@@ -406,7 +419,8 @@ def _clocks_compatible(clock, device_cfg: DeviceCompilationConfig, schedule) -> 
 
 
 def _assert_operation_valid_device_level(operation: Operation) -> None:
-    """Verifies that the operation has been compiled to device level.
+    """
+    Verifies that the operation has been compiled to device level.
 
     Parameters
     ----------
@@ -558,9 +572,7 @@ def _add_device_repr_from_cfg_multiplexed(
 
 # pylint: disable=super-init-not-called
 class ConfigKeyError(KeyError):
-    """
-    Custom exception for when a key is missing in a configuration file.
-    """
+    """Custom exception for when a key is missing in a configuration file."""
 
     def __init__(self, kind, missing, allowed):
         self.value = (
@@ -574,9 +586,7 @@ class ConfigKeyError(KeyError):
 
 # pylint: disable=super-init-not-called
 class MultipleKeysError(KeyError):
-    """
-    Custom exception for when symmetric keys are found in a configuration file.
-    """
+    """Custom exception for when symmetric keys are found in a configuration file."""
 
     def __init__(self, operation, matches):
         self.value = (

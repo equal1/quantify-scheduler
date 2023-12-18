@@ -4,18 +4,25 @@
 from __future__ import annotations
 
 import warnings
-from copy import deepcopy
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type, Union
+
+from pydantic import Field, model_validator
 
 from quantify_scheduler import CompiledSchedule, Schedule
 from quantify_scheduler.backends.corrections import (
     apply_distortion_corrections,
     determine_relative_latency_corrections,
 )
-from quantify_scheduler.backends.graph_compilation import CompilationConfig
+from quantify_scheduler.backends.graph_compilation import (
+    CompilationConfig,
+    SimpleNodeConfig,
+)
 from quantify_scheduler.backends.qblox import compiler_container, constants, helpers
+from quantify_scheduler.backends.qblox.operations import long_square_pulse
+from quantify_scheduler.backends.qblox.operations.stitched_pulse import StitchedPulse
 from quantify_scheduler.backends.types.common import (
     HardwareCompilationConfig,
+    HardwareDescription,
     HardwareOptions,
 )
 from quantify_scheduler.backends.types.qblox import (
@@ -23,12 +30,11 @@ from quantify_scheduler.backends.types.qblox import (
     QbloxHardwareOptions,
 )
 from quantify_scheduler.helpers.collections import find_inner_dicts_containing_key
-from quantify_scheduler.operations.pulse_factories import long_square_pulse
-from quantify_scheduler.operations.stitched_pulse import StitchedPulse
 
 
 def _get_square_pulses_to_replace(schedule: Schedule) -> Dict[str, List[int]]:
-    """Generate a dict referring to long square pulses to replace in the schedule.
+    """
+    Generate a dict referring to long square pulses to replace in the schedule.
 
     This function generates a mapping (dict) from the keys in the
     :meth:`~quantify_scheduler.schedules.schedule.ScheduleBase.operations` dict to a
@@ -44,7 +50,7 @@ def _get_square_pulses_to_replace(schedule: Schedule) -> Dict[str, List[int]]:
     Returns
     -------
     square_pulse_idx_map : Dict[str, List[int]]
-        The mapping from ``operation_repr`` to ``"pulse_info"`` indices to be replaced.
+        The mapping from ``operation_id`` to ``"pulse_info"`` indices to be replaced.
     """
     square_pulse_idx_map: Dict[str, List[int]] = {}
     for ref, operation in schedule.operations.items():
@@ -63,7 +69,8 @@ def _get_square_pulses_to_replace(schedule: Schedule) -> Dict[str, List[int]]:
 def _replace_long_square_pulses(
     schedule: Schedule, pulse_idx_map: Dict[str, List[int]]
 ) -> Schedule:
-    """Replace any square pulses indicated by pulse_idx_map by a `long_square_pulse`.
+    """
+    Replace any square pulses indicated by pulse_idx_map by a ``long_square_pulse``.
 
     Parameters
     ----------
@@ -82,7 +89,7 @@ def _replace_long_square_pulses(
         The schedule with square pulses longer than
         :class:`~quantify_scheduler.backends.qblox.constants.PULSE_STITCHING_DURATION`
         replaced by
-        :func:`~quantify_scheduler.operations.pulse_factories.long_square_pulse`. If no
+        :func:`~quantify_scheduler.backends.qblox.operations.pulse_factories.long_square_pulse`. If no
         replacements were done, this is the original unmodified schedule.
     """
     for ref, square_pulse_idx_to_replace in pulse_idx_map.items():
@@ -114,13 +121,14 @@ def _replace_long_square_pulses(
 
 
 def compile_long_square_pulses_to_awg_offsets(schedule: Schedule, **_: Any) -> Schedule:
-    """Replace square pulses in the schedule with long square pulses.
+    """
+    Replace square pulses in the schedule with long square pulses.
 
     Introspects operations in the schedule to find square pulses with a duration
     longer than
     :class:`~quantify_scheduler.backends.qblox.constants.PULSE_STITCHING_DURATION`. Any
     of these square pulses are converted to
-    :func:`~quantify_scheduler.operations.pulse_factories.long_square_pulse`, which
+    :func:`~quantify_scheduler.backends.qblox.operations.pulse_factories.long_square_pulse`, which
     consist of AWG voltage offsets.
 
     If any operations are to be replaced, a deepcopy will be made of the schedule, which
@@ -139,7 +147,7 @@ def compile_long_square_pulses_to_awg_offsets(schedule: Schedule, **_: Any) -> S
         The schedule with square pulses longer than
         :class:`~quantify_scheduler.backends.qblox.constants.PULSE_STITCHING_DURATION`
         replaced by
-        :func:`~quantify_scheduler.operations.pulse_factories.long_square_pulse`. If no
+        :func:`~quantify_scheduler.backends.qblox.operations.pulse_factories.long_square_pulse`. If no
         replacements were done, this is the original unmodified schedule.
     """
     pulse_idx_map = _get_square_pulses_to_replace(schedule)
@@ -178,7 +186,7 @@ def hardware_compile(
         :class:`~quantify_scheduler.backends.graph_compilation.QuantifyCompiler`.
     hardware_cfg
         (deprecated) The hardware configuration of the setup. Pass a full compilation
-        config instead using `config` argument.
+        config instead using ``config`` argument.
 
     Returns
     -------
@@ -188,7 +196,7 @@ def hardware_compile(
     Raises
     ------
     ValueError
-        When both `config` and `hardware_cfg` are supplied.
+        When both ``config`` and ``hardware_cfg`` are supplied.
     """
     if not ((config is not None) ^ (hardware_cfg is not None)):
         raise ValueError(
@@ -209,10 +217,12 @@ def hardware_compile(
 
     if isinstance(config, CompilationConfig):
         # Extract the hardware config from the CompilationConfig
-        hardware_cfg = helpers.generate_hardware_config(compilation_config=config)
+        hardware_cfg = helpers.generate_hardware_config(
+            schedule=schedule, compilation_config=config
+        )
     elif config is not None:
         # Support for (deprecated) calling with hardware_cfg as positional argument.
-        hardware_cfg = config
+        hardware_cfg = helpers._preprocess_legacy_hardware_config(config)
 
     # To be removed when hardware config validation is implemented. See
     # https://gitlab.com/groups/quantify-os/-/epics/1
@@ -252,8 +262,12 @@ def hardware_compile(
     compiled_instructions = container.compile(
         debug_mode=debug_mode, repetitions=schedule.repetitions
     )
+    # Create compiled instructions key if not already present. This can happen if this
+    # compilation function is called directly instead of through a `QuantifyCompiler`.
+    if "compiled_instructions" not in schedule:
+        schedule["compiled_instructions"] = {}
     # add the compiled instructions to the schedule data structure
-    schedule["compiled_instructions"] = compiled_instructions
+    schedule["compiled_instructions"].update(compiled_instructions)
     # Mark the schedule as a compiled schedule
     return CompiledSchedule(schedule)
 
@@ -267,9 +281,18 @@ class QbloxHardwareCompilationConfig(HardwareCompilationConfig):
     contains fields for hardware-specific settings.
     """
 
-    backend: Callable[[Schedule, Any], Schedule] = hardware_compile
-    """The compilation backend this configuration is intended for."""
-    hardware_description: Dict[str, QbloxHardwareDescription]
+    config_type: Type[QbloxHardwareCompilationConfig] = Field(
+        default="quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+        validate_default=True,
+    )
+    """
+    A reference to the
+    :class:`~quantify_scheduler.backends.types.common.HardwareCompilationConfig`
+    DataStructure for the Qblox backend.
+    """
+    hardware_description: Dict[
+        str, Union[QbloxHardwareDescription, HardwareDescription]
+    ]
     """Description of the instruments in the physical setup."""
     hardware_options: QbloxHardwareOptions
     """
@@ -277,3 +300,32 @@ class QbloxHardwareCompilationConfig(HardwareCompilationConfig):
     :class:`~quantify_scheduler.backends.types.common.LatencyCorrection` or
     :class:`~quantify_scheduler.backends.types.qblox.SequencerOptions`.
     """
+    compilation_passes: List[SimpleNodeConfig] = [
+        SimpleNodeConfig(
+            name="compile_long_square_pulses_to_awg_offsets",
+            compilation_func=compile_long_square_pulses_to_awg_offsets,
+        ),
+        SimpleNodeConfig(
+            name="qblox_hardware_compile", compilation_func=hardware_compile
+        ),
+    ]
+    """
+    The list of compilation nodes that should be called in succession to compile a 
+    schedule to instructions for the Qblox hardware.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def from_old_style_hardware_config(
+        cls: type[QbloxHardwareCompilationConfig], data: Any
+    ) -> Any:
+        """Convert old style hardware config dict to new style before validation."""
+        if (
+            isinstance(data, dict)
+            and data.get("backend")
+            == "quantify_scheduler.backends.qblox_backend.hardware_compile"
+        ):
+            # Input is an old style Qblox hardware config dict
+            data = helpers._generate_new_style_hardware_compilation_config(data)
+
+        return data

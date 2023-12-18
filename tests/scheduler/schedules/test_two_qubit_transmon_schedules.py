@@ -21,14 +21,14 @@ class TestChevronCZSched:
     @classmethod
     def setup_class(cls: Type) -> None:
         """Configure an example sweep for a single flux pulse duration."""
-        cls.sched_kwargs = {
+        cls.sched_kwargs = {  # type: ignore
             "lf_qubit": "q0",
             "hf_qubit": "q4",
             "amplitudes": np.linspace(0, 80e-6, 21),
             "duration": 100e-9,
             "repetitions": 10,
         }
-        cls.uncomp_sched = ts.chevron_cz_sched(**cls.sched_kwargs)
+        cls.uncomp_sched = ts.chevron_cz_sched(**cls.sched_kwargs)  # type: ignore
 
     def test_repetitions(self) -> None:
         """Test that the number of repetitions is correct."""
@@ -55,7 +55,7 @@ class TestChevronCZSched:
 
             # Test that the amplitude of the flux pulse is unchanged
             if schedulable["label"].startswith("SquarePulse"):
-                op_hash = schedulable["operation_repr"]
+                op_hash = schedulable["operation_id"]
                 pulse = self.uncomp_sched.operations[op_hash]["pulse_info"][0]
                 assert pulse["amp"] == self.sched_kwargs["amplitudes"][sq_pulse_idx]
                 sq_pulse_idx += 1
@@ -70,7 +70,7 @@ class TestChevronCZSched:
             "amplitudes": 0.25,
             "duration": 100e-9,
             "repetitions": 10,
-        }
+        }  # type: ignore
         sched = ts.chevron_cz_sched(**sched_kwargs)
         compiler = SerialCompiler(name="compiler")
         _ = compiler.compile(
@@ -97,7 +97,7 @@ class TestChevronCZSched:
 
         for schedulable in compiled_sched.schedulables.values():
             if schedulable["label"].startswith("SquarePulse"):
-                operation = compiled_sched.operations[schedulable["operation_repr"]]
+                operation = compiled_sched.operations[schedulable["operation_id"]]
                 assert operation["pulse_info"][0]["port"] == "q1:fl"
 
     def test_sched_compile(

@@ -10,12 +10,12 @@ from pydantic import BaseModel, ConfigDict
 
 from quantify_scheduler.helpers.importers import (
     import_python_object_from_string,
-    export_python_object_to_path_string,
 )
 
 
 def orjson_dumps(obj: Any, *, default: Callable[[Any], Any]) -> str:
-    """Dump an object to a JSON string using :mod:`orjson` library.
+    """
+    Dump an object to a JSON string using :mod:`orjson` library.
 
     Parameters
     ----------
@@ -42,7 +42,8 @@ def orjson_dumps(obj: Any, *, default: Callable[[Any], Any]) -> str:
 
 
 class DataStructure(BaseModel):  # pylint: disable=too-few-public-methods
-    """A parent for all data structures.
+    """
+    A parent for all data structures.
 
     Data attributes are generated from the class' type annotations, similarly to
     `dataclasses <https://docs.python.org/3/library/dataclasses.html>`_. If data
@@ -72,7 +73,8 @@ class DataStructure(BaseModel):  # pylint: disable=too-few-public-methods
 
 
 def deserialize_function(fun: str) -> Callable[..., Any]:
-    """Import a python function from a dotted import string (e.g.,
+    """
+    Import a python function from a dotted import string (e.g.,
     "quantify_scheduler.structure.model.deserialize_function").
 
     Parameters
@@ -98,12 +100,15 @@ def deserialize_function(fun: str) -> Callable[..., Any]:
 
 
 def deserialize_class(cls: str) -> type:
-    """Import a python class from a dotted import string (e.g.,
+    """
+    Import a python class from a dotted import string (e.g.,
     "quantify_scheduler.structure.model.DataStructure").
 
     Parameters
     ----------
     cls : str
+        A dotted import path to a class (e.g.,
+        "quantify_scheduler.structure.model.DataStructure"), or a class pointer.
 
     Returns
     -------

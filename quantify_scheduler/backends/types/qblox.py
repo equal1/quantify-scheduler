@@ -6,16 +6,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field as dataclasses_field
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, TypeVar, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Literal,
+    Optional,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
 from dataclasses_json import DataClassJsonMixin
 from pydantic import Field, field_validator
 from typing_extensions import Annotated
 
-from quantify_scheduler.backends.qblox import constants, enums, q1asm_instructions
+from quantify_scheduler.backends.qblox import constants, q1asm_instructions
 from quantify_scheduler.backends.types.common import (
     HardwareDescription,
     HardwareOptions,
+    IQMixerDescription,
     LocalOscillatorDescription,
 )
 from quantify_scheduler.structure.model import DataStructure
@@ -35,9 +46,7 @@ class BoundedParameter:
 
 @dataclass(frozen=True)
 class StaticHardwareProperties:
-    """
-    Specifies the fixed hardware properties needed in the backend.
-    """
+    """Specifies the fixed hardware properties needed in the backend."""
 
     instrument_type: str
     """The type of instrument."""
@@ -48,15 +57,48 @@ class StaticHardwareProperties:
     mixer_dc_offset_range: BoundedParameter
     """Specifies the range over which the dc offsets can be set that are used for mixer
     calibration."""
-    valid_ios: List[str]
-    """Specifies the complex/real output identifiers supported by this device."""
+    channel_name_to_connected_io_indices: Dict[str, Union[Tuple[int], Tuple[int, int]]]
+    """Specifies the connected io indices per channel_name identifier."""
     default_marker: int = 0
     """The default marker value to set at the beginning of programs.
-    Important for RF instruments that use the marker to enable the RF output."""
-    output_map: Dict[str, int] = dataclasses_field(default_factory=dict)
-    """A mapping from output name to marker setting.
+    Important for RF instruments that use the set_mrk command to enable/disable the RF output."""
+    channel_name_to_digital_marker: Dict[str, int] = dataclasses_field(
+        default_factory=dict
+    )
+    """A mapping from channel_name to digital marker setting.
     Specifies which marker bit needs to be set at start if the
     output (as a string ex. `complex_output_0`) contains a pulse."""
+
+    @property
+    def valid_channels(self) -> Iterable[str]:
+        """Specifies the channel_name identifiers supported by this instrument."""
+        return self.channel_name_to_connected_io_indices.keys()
+
+    def _get_connected_output_indices(
+        self, channel_name
+    ) -> Optional[Union[Tuple[int], Tuple[int, int], None]]:
+        """
+        Return the connected output indices associated with the output name
+        specified in the hardware config.
+        """
+        return (
+            self.channel_name_to_connected_io_indices[channel_name]
+            if "output" in channel_name
+            else None
+        )
+
+    def _get_connected_input_indices(
+        self, channel_name
+    ) -> Optional[Union[Tuple[int], Tuple[int, int], None]]:
+        """
+        Return the connected input indices associated with the input name
+        specified in the hardware config.
+        """
+        return (
+            self.channel_name_to_connected_io_indices[channel_name]
+            if "input" in channel_name
+            else None
+        )
 
 
 @dataclass(frozen=True)
@@ -69,7 +111,7 @@ class OpInfo(DataClassJsonMixin):
     name: str
     """Name of the operation that this pulse/acquisition is part of."""
     data: dict
-    """The pulse/acquisition info taken from the `data` property of the
+    """The pulse/acquisition info taken from the ``data`` property of the
     pulse/acquisition in the schedule."""
     timing: float
     """The start time of this pulse/acquisition.
@@ -89,7 +131,8 @@ class OpInfo(DataClassJsonMixin):
 
     @property
     def is_real_time_io_operation(self) -> bool:
-        """Returns ``True`` if the operation is a non-idle pulse (i.e., it has a
+        """
+        Returns ``True`` if the operation is a non-idle pulse (i.e., it has a
         waveform), ``False`` otherwise.
         """
         return (
@@ -100,24 +143,34 @@ class OpInfo(DataClassJsonMixin):
 
     @property
     def is_offset_instruction(self) -> bool:
-        """Returns ``True`` if the operation describes a DC offset operation,
+        """
+        Returns ``True`` if the operation describes a DC offset operation,
         corresponding to the Q1ASM instruction ``set_awg_offset``.
         """
-        return "offset_path_0" in self.data or "offset_path_1" in self.data
+        return "offset_path_I" in self.data or "offset_path_Q" in self.data
 
     @property
     def is_parameter_update(self) -> bool:
-        """Return ``True`` if the operation is a parameter update, corresponding to the
+        """
+        Return ``True`` if the operation is a parameter update, corresponding to the
         Q1ASM instruction ``upd_param``.
         """
         return self.data.get("instruction", "") == q1asm_instructions.UPDATE_PARAMETERS
 
     @property
     def is_loop(self) -> bool:
+        """
+        Return ``True`` if the operation is a loop, corresponding to the Q1ASM
+        instruction ``loop``.
+        """
         return self.data.get("repetitions", None) is not None
 
     @property
     def is_return_stack(self) -> bool:
+        """
+        Return ``True`` if the operation is a return stack, corresponding to the Q1ASM
+        instruction ``return_stack``.
+        """
         return self.data.get("return_stack", None) is not None
 
     def __str__(self):
@@ -137,9 +190,7 @@ class OpInfo(DataClassJsonMixin):
 
 @dataclass(frozen=True)
 class LOSettings(DataClassJsonMixin):
-    """
-    Dataclass containing all the settings for a generic LO instrument.
-    """
+    """Dataclass containing all the settings for a generic LO instrument."""
 
     power: Dict[str, float]
     """Power of the LO source."""
@@ -163,7 +214,6 @@ class LOSettings(DataClassJsonMixin):
         :
             Instantiated LOSettings from the mapping dict.
         """
-
         if "power" not in mapping:
             raise KeyError(
                 "Attempting to compile settings for a local oscillator but 'power' is "
@@ -194,14 +244,14 @@ class LOSettings(DataClassJsonMixin):
 class BaseModuleSettings(DataClassJsonMixin):
     """Shared settings between all the Qblox modules."""
 
-    offset_ch0_path0: Optional[float] = None
-    """The DC offset on the path 0 of channel 0."""
-    offset_ch0_path1: Optional[float] = None
-    """The DC offset on the path 1 of channel 0."""
-    offset_ch1_path0: Optional[float] = None
-    """The DC offset on path 0 of channel 1."""
-    offset_ch1_path1: Optional[float] = None
-    """The DC offset on path 1 of channel 1."""
+    offset_ch0_path_I: Optional[float] = None
+    """The DC offset on the path_I of channel 0."""
+    offset_ch0_path_Q: Optional[float] = None
+    """The DC offset on the path_Q of channel 0."""
+    offset_ch1_path_I: Optional[float] = None
+    """The DC offset on path_I of channel 1."""
+    offset_ch1_path_Q: Optional[float] = None
+    """The DC offset on path_Q of channel 1."""
     in0_gain: Optional[int] = None
     """The gain of input 0."""
     in1_gain: Optional[int] = None
@@ -347,25 +397,23 @@ class SequencerSettings(DataClassJsonMixin):
     """Specifies whether the NCO will be used or not."""
     sync_en: bool
     """Enables party-line synchronization."""
-    io_name: str
-    """Specifies the io identifier of the hardware config (e.g. `complex_output_0`)."""
-    connected_outputs: Optional[Union[Tuple[int], Tuple[int, int]]]
-    """Specifies which physical outputs this sequencer produces waveform data for."""
-    connected_inputs: Optional[Union[Tuple[int], Tuple[int, int]]]
-    """Specifies which physical inputs this sequencer collects data for."""
-    io_mode: enums.IoMode
-    """Specifies the type of input/output this sequencer is handling."""
-    init_offset_awg_path_0: float = 0.0
-    """Specifies what value the sequencer offset for AWG path 0 will be reset to
+    channel_name: str
+    """Specifies the channel identifier of the hardware config (e.g. `complex_output_0`)."""
+    connected_output_indices: Optional[Union[Tuple[int], Tuple[int, int]]]
+    """Specifies the indices of the outputs this sequencer produces waveforms for."""
+    connected_input_indices: Optional[Union[Tuple[int], Tuple[int, int]]]
+    """Specifies the indices of the inputs this sequencer collects data for."""
+    init_offset_awg_path_I: float = 0.0
+    """Specifies what value the sequencer offset for AWG path_I will be reset to
     before the start of the experiment."""
-    init_offset_awg_path_1: float = 0.0
-    """Specifies what value the sequencer offset for AWG path 1 will be reset to
+    init_offset_awg_path_Q: float = 0.0
+    """Specifies what value the sequencer offset for AWG path_Q will be reset to
     before the start of the experiment."""
-    init_gain_awg_path_0: float = 1.0
-    """Specifies what value the sequencer gain for AWG path 0 will be reset to
+    init_gain_awg_path_I: float = 1.0
+    """Specifies what value the sequencer gain for AWG path_I will be reset to
     before the start of the experiment."""
-    init_gain_awg_path_1: float = 1.0
-    """Specifies what value the sequencer gain for AWG path 0 will be reset to
+    init_gain_awg_path_Q: float = 1.0
+    """Specifies what value the sequencer gain for AWG path_Q will be reset to
     before the start of the experiment."""
     modulation_freq: Optional[float] = None
     """Specifies the frequency of the modulation."""
@@ -397,10 +445,9 @@ class SequencerSettings(DataClassJsonMixin):
     def initialize_from_config_dict(
         cls,
         sequencer_cfg: Dict[str, Any],
-        io_name: str,
-        connected_outputs: Optional[Union[Tuple[int], Tuple[int, int]]],
-        connected_inputs: Optional[Union[Tuple[int], Tuple[int, int]]],
-        io_mode: enums.IoMode,
+        channel_name: str,
+        connected_output_indices: Optional[Union[Tuple[int], Tuple[int, int]]],
+        connected_input_indices: Optional[Union[Tuple[int], Tuple[int, int]]],
     ) -> SequencerSettings:
         """
         Instantiates an instance of this class, with initial parameters determined from
@@ -410,21 +457,18 @@ class SequencerSettings(DataClassJsonMixin):
         ----------
         sequencer_cfg : dict
             The sequencer configuration dict.
-        io_name
-            Specifies the io identifier of the hardware config (e.g. `complex_output_0`).
-        connected_outputs
-            The outputs connected to the sequencer.
-        connected_inputs
-            The inputs connected to the sequencer.
-        io_mode
-            The type of input/output this sequencer is handling.
+        channel_name
+            Specifies the channel identifier of the hardware config (e.g. `complex_output_0`).
+        connected_output_indices
+            Specifies the indices of the outputs this sequencer produces waveforms for.
+        connected_input_indices
+            Specifies the indices of the inputs this sequencer collects data for.
 
         Returns
         -------
         : SequencerSettings
             A SequencerSettings instance with initial values.
         """
-
         T = TypeVar("T", int, float)
 
         def extract_and_verify_range(
@@ -451,34 +495,34 @@ class SequencerSettings(DataClassJsonMixin):
             modulation_freq is not None and modulation_freq != 0
         )  # Allow NCO to be permanently disabled via `"interm_freq": 0` in the hardware config
 
-        init_offset_awg_path_0 = extract_and_verify_range(
-            param_name="init_offset_awg_path_0",
+        init_offset_awg_path_I = extract_and_verify_range(
+            param_name="init_offset_awg_path_I",
             settings=sequencer_cfg,
-            default_value=cls.init_offset_awg_path_0,
+            default_value=cls.init_offset_awg_path_I,
             min_value=-1.0,
             max_value=1.0,
         )
 
-        init_offset_awg_path_1 = extract_and_verify_range(
-            param_name="init_offset_awg_path_1",
+        init_offset_awg_path_Q = extract_and_verify_range(
+            param_name="init_offset_awg_path_Q",
             settings=sequencer_cfg,
-            default_value=cls.init_offset_awg_path_1,
+            default_value=cls.init_offset_awg_path_Q,
             min_value=-1.0,
             max_value=1.0,
         )
 
-        init_gain_awg_path_0 = extract_and_verify_range(
-            param_name="init_gain_awg_path_0",
+        init_gain_awg_path_I = extract_and_verify_range(
+            param_name="init_gain_awg_path_I",
             settings=sequencer_cfg,
-            default_value=cls.init_gain_awg_path_0,
+            default_value=cls.init_gain_awg_path_I,
             min_value=-1.0,
             max_value=1.0,
         )
 
-        init_gain_awg_path_1 = extract_and_verify_range(
-            param_name="init_gain_awg_path_1",
+        init_gain_awg_path_Q = extract_and_verify_range(
+            param_name="init_gain_awg_path_Q",
             settings=sequencer_cfg,
-            default_value=cls.init_gain_awg_path_1,
+            default_value=cls.init_gain_awg_path_Q,
             min_value=-1.0,
             max_value=1.0,
         )
@@ -520,14 +564,13 @@ class SequencerSettings(DataClassJsonMixin):
         sequencer_settings = cls(
             nco_en=nco_en,
             sync_en=True,
-            io_name=io_name,
-            connected_outputs=connected_outputs,
-            connected_inputs=connected_inputs,
-            io_mode=io_mode,
-            init_offset_awg_path_0=init_offset_awg_path_0,
-            init_offset_awg_path_1=init_offset_awg_path_1,
-            init_gain_awg_path_0=init_gain_awg_path_0,
-            init_gain_awg_path_1=init_gain_awg_path_1,
+            channel_name=channel_name,
+            connected_output_indices=connected_output_indices,
+            connected_input_indices=connected_input_indices,
+            init_offset_awg_path_I=init_offset_awg_path_I,
+            init_offset_awg_path_Q=init_offset_awg_path_Q,
+            init_gain_awg_path_I=init_gain_awg_path_I,
+            init_gain_awg_path_Q=init_gain_awg_path_Q,
             modulation_freq=modulation_freq,
             mixer_corr_phase_offset_degree=mixer_phase_error,
             mixer_corr_gain_ratio=mixer_amp_ratio,
@@ -556,7 +599,7 @@ class ComplexChannelDescription(DataStructure):
     The marker will be pulled high at the same time as the module starts playing or acquiring.
     """
     mix_lo: bool = True
-    """Whether IQ mixing with a local oscillator is enabled for this channel. Effectively always `True` for RF modules."""
+    """Whether IQ mixing with a local oscillator is enabled for this channel. Effectively always ``True`` for RF modules."""
     downconverter_freq: Optional[float] = None
     """
     Downconverter frequency that should be taken into account when determining the modulation frequencies for this channel.
@@ -678,6 +721,15 @@ ClusterModuleDescription = Annotated[
     Union[QRMDescription, QCMDescription, QRMRFDescription, QCMRFDescription],
     Field(discriminator="instrument_type"),
 ]
+"""
+Specifies a Cluster module and its instrument-specific settings.
+
+The supported instrument types are:
+:class:`~.QRMDescription`,
+:class:`~.QCMDescription`,
+:class:`~.QRMRFDescription`,
+:class:`~.QCMRFDescription`,
+"""
 
 
 class ClusterDescription(QbloxBaseDescription):
@@ -749,6 +801,7 @@ QbloxHardwareDescription = Annotated[
         PulsarQCMDescription,
         PulsarQRMDescription,
         LocalOscillatorDescription,
+        IQMixerDescription,
     ],
     Field(discriminator="instrument_type"),
 ]
@@ -851,27 +904,27 @@ class SequencerOptions(DataStructure):
 
             hardware_compilation_config.hardware_options.sequencer_options = {
                 "q0:res-q0.ro": {
-                    "init_offset_awg_path_0": 0.1,
-                    "init_offset_awg_path_1": -0.1,
-                    "init_gain_awg_path_0": 0.9,
-                    "init_gain_awg_path_1": 1.0,
+                    "init_offset_awg_path_I": 0.1,
+                    "init_offset_awg_path_Q": -0.1,
+                    "init_gain_awg_path_I": 0.9,
+                    "init_gain_awg_path_Q": 1.0,
                     "ttl_acq_threshold": 0.5
                     "qasm_hook_func": foo
                 }
             }
     """
 
-    init_offset_awg_path_0: float = 0.0
-    """Specifies what value the sequencer offset for AWG path 0 will be reset to
+    init_offset_awg_path_I: float = 0.0
+    """Specifies what value the sequencer offset for AWG path_I will be reset to
     before the start of the experiment."""
-    init_offset_awg_path_1: float = 0.0
-    """Specifies what value the sequencer offset for AWG path 1 will be reset to
+    init_offset_awg_path_Q: float = 0.0
+    """Specifies what value the sequencer offset for AWG path_Q will be reset to
     before the start of the experiment."""
-    init_gain_awg_path_0: float = 1.0
-    """Specifies what value the sequencer gain for AWG path 0 will be reset to
+    init_gain_awg_path_I: float = 1.0
+    """Specifies what value the sequencer gain for AWG path_I will be reset to
     before the start of the experiment."""
-    init_gain_awg_path_1: float = 1.0
-    """Specifies what value the sequencer gain for AWG path 0 will be reset to
+    init_gain_awg_path_Q: float = 1.0
+    """Specifies what value the sequencer gain for AWG path_Q will be reset to
     before the start of the experiment."""
     ttl_acq_threshold: Optional[float] = None
     """Threshold value with which to compare the input ADC values of the selected input path."""
@@ -882,10 +935,10 @@ class SequencerOptions(DataStructure):
     """
 
     @field_validator(
-        "init_offset_awg_path_0",
-        "init_offset_awg_path_1",
-        "init_gain_awg_path_0",
-        "init_gain_awg_path_1",
+        "init_offset_awg_path_I",
+        "init_offset_awg_path_Q",
+        "init_gain_awg_path_I",
+        "init_gain_awg_path_Q",
     )
     def _init_setting_limits(cls, init_setting):  # noqa: N805
         # if connectivity contains a hardware config with latency corrections

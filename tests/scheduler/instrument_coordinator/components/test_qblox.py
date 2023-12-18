@@ -33,15 +33,17 @@ from qcodes.instrument import Instrument, InstrumentChannel, InstrumentModule
 from quantify_core.data.handling import get_datadir
 from xarray import Dataset
 
-from quantify_scheduler import Schedule
 from quantify_scheduler.backends import SerialCompiler
 from quantify_scheduler.device_under_test.quantum_device import QuantumDevice
 from quantify_scheduler.device_under_test.transmon_element import BasicTransmonElement
 from quantify_scheduler.enums import BinMode
 from quantify_scheduler.instrument_coordinator.components import qblox
+from quantify_scheduler.operations.acquisition_library import SSBIntegrationComplex
 from quantify_scheduler.operations.gate_library import Reset
 from quantify_scheduler.operations.pulse_library import MarkerPulse, SquarePulse
-from quantify_scheduler.schedules.schedule import AcquisitionMetadata
+from quantify_scheduler.resources import ClockResource
+from quantify_scheduler.schedules.schedule import AcquisitionMetadata, Schedule
+
 from tests.fixtures.mock_setup import close_instruments
 
 
@@ -275,16 +277,16 @@ def test_reset_qcodes_settings(
 
     # Act
     hardware_cfg["qcm0"]["complex_output_0"]["portclock_configs"][0][
-        "init_offset_awg_path_0"
+        "init_offset_awg_path_I"
     ] = 0.25
     hardware_cfg["qcm0"]["complex_output_0"]["portclock_configs"][0][
-        "init_offset_awg_path_1"
+        "init_offset_awg_path_Q"
     ] = 0.33
     hardware_cfg["qrm2"]["real_output_0"]["portclock_configs"][0][
-        "init_gain_awg_path_0"
+        "init_gain_awg_path_I"
     ] = 0.5
     hardware_cfg["qrm2"]["real_output_1"]["portclock_configs"][0][
-        "init_gain_awg_path_1"
+        "init_gain_awg_path_Q"
     ] = -0.5
 
     quantum_device = mock_setup_basic_transmon_with_standard_params["quantum_device"]
@@ -398,16 +400,16 @@ def test_init_qcodes_settings(
 
     # Act
     hardware_cfg["qcm0"]["complex_output_0"]["portclock_configs"][0][
-        "init_offset_awg_path_0"
+        "init_offset_awg_path_I"
     ] = 0.25
     hardware_cfg["qcm0"]["complex_output_0"]["portclock_configs"][0][
-        "init_offset_awg_path_1"
+        "init_offset_awg_path_Q"
     ] = 0.33
     hardware_cfg["qrm2"]["real_output_0"]["portclock_configs"][0][
-        "init_gain_awg_path_0"
+        "init_gain_awg_path_I"
     ] = 0.5
     hardware_cfg["qrm2"]["real_output_1"]["portclock_configs"][0][
-        "init_gain_awg_path_1"
+        "init_gain_awg_path_Q"
     ] = -0.5
 
     quantum_device = mock_setup_basic_transmon_with_standard_params["quantum_device"]
@@ -473,7 +475,7 @@ def test_invalid_init_qcodes_settings(
 
     # Act
     hardware_cfg["qcm0"]["complex_output_0"]["portclock_configs"][0][
-        "init_offset_awg_path_0"
+        "init_offset_awg_path_I"
     ] = 1.25
 
     quantum_device = mock_setup_basic_transmon_with_standard_params["quantum_device"]
@@ -547,10 +549,6 @@ def test_prepare_qcm_qrm(
     qrm2.prepare(prog[qrm2.instrument.name])
 
     # Assert
-    qcm0.instrument.arm_sequencer.assert_called_with(sequencer=0)
-    qrm0.instrument.arm_sequencer.assert_called_with(sequencer=0)
-    qrm2.instrument.arm_sequencer.assert_called_with(sequencer=1)
-
     if set_reference_source:
         if force_set_parameters:
             qcm0.instrument._set_reference_source.assert_called()
@@ -594,7 +592,6 @@ def test_prepare_qcm_qrm(
 def test_prepare_cluster_rf(
     mocker,
     mock_setup_basic_transmon,
-    make_schedule_with_measurement,
     hardware_compilation_config_qblox_example,
     make_cluster_component,
     force_set_parameters,
@@ -616,17 +613,23 @@ def test_prepare_cluster_rf(
     ic_cluster.force_set_parameters(force_set_parameters)
     ic_cluster.instrument.reference_source("internal")  # Put it in a known state
 
-    quantum_device = mock_setup_basic_transmon["quantum_device"]
-    q5 = BasicTransmonElement("q5")
-    quantum_device.add_element(q5)
-
-    q5.rxy.amp180(0.213)
-    q5.clock_freqs.f01(6.33e9)
-    q5.clock_freqs.f12(6.09e9)
-    q5.clock_freqs.readout(8.5e9)
-    q5.measure.acq_delay(100e-9)
-
-    sched = make_schedule_with_measurement("q5")
+    sched = Schedule("pulse_sequence")
+    sched.add(
+        SquarePulse(port="q5:mw", clock="q5.01", amp=0.25, duration=12e-9),
+        ref_pt="start",
+    )
+    sched.add(
+        SquarePulse(port="q6:mw", clock="q6.01", amp=0.25, duration=12e-9),
+        ref_pt="start",
+    )
+    sched.add(
+        SquarePulse(port="q0:res", clock="q0.ro", amp=0.25, duration=12e-9),
+        ref_pt="start",
+    )
+    sched.add(SSBIntegrationComplex(duration=1e-6, port="q0:res", clock="q0.ro"))
+    sched.add_resource(ClockResource("q5.01", freq=5e9))
+    sched.add_resource(ClockResource("q6.01", freq=5.3e9))
+    sched.add_resource(ClockResource("q0.ro", freq=8e9))
 
     quantum_device = mock_setup_basic_transmon["quantum_device"]
     quantum_device.hardware_config(hardware_compilation_config_qblox_example)
@@ -644,9 +647,6 @@ def test_prepare_cluster_rf(
     # Assert
     assert compiled_schedule == compiled_schedule_before_prepare
 
-    qcm_rf.arm_sequencer.assert_called_with(sequencer=0)
-    qrm_rf.arm_sequencer.assert_called_with(sequencer=0)
-
     # Assert it's only set in initialization
     ic_cluster.instrument.reference_source.assert_called_once()
 
@@ -663,7 +663,7 @@ def test_prepare_cluster_rf(
 
     for qcodes_param, hw_options_param in [
         ("out0_att", ["output_att", "q0:res-q0.ro"]),
-        ("in0_att", ["input_att", "q5:res-q5.ro"]),
+        ("in0_att", ["input_att", "q0:res-q0.ro"]),
     ]:
         qrm_rf.parameters[qcodes_param].set.assert_any_call(
             hardware_compilation_config_qblox_example["hardware_options"][
@@ -867,6 +867,9 @@ def test_start_qcm_qrm(
     qrm.start()
 
     # Assert
+    qcm.instrument.arm_sequencer.assert_called_with(sequencer=0)
+    qrm.instrument.arm_sequencer.assert_called_with(sequencer=0)
+
     qcm.instrument.start_sequencer.assert_called()
     qrm.instrument.start_sequencer.assert_called()
 
@@ -903,6 +906,9 @@ def test_start_qcm_qrm_rf(
     qrm_rf.start()
 
     # Assert
+    qcm_rf.instrument.arm_sequencer.assert_called_with(sequencer=0)
+    qrm_rf.instrument.arm_sequencer.assert_called_with(sequencer=0)
+
     qcm_rf.instrument.start_sequencer.assert_called()
     qrm_rf.instrument.start_sequencer.assert_called()
 
@@ -939,7 +945,7 @@ def test_qrm_acquisition_manager__init__(make_qrm_component):
     qblox._QRMAcquisitionManager(
         parent=qrm,
         acquisition_metadata=dict(),
-        scope_mode_sequencer_and_channel=None,
+        scope_mode_sequencer_and_qblox_acq_index=None,
         acquisition_duration={},
         seq_name_to_idx_map={},
     )
@@ -950,7 +956,7 @@ def test_get_integration_data(make_qrm_component, mock_acquisition_data):
     acq_manager = qblox._QRMAcquisitionManager(
         parent=qrm,
         acquisition_metadata=dict(),
-        scope_mode_sequencer_and_channel=None,
+        scope_mode_sequencer_and_qblox_acq_index=None,
         acquisition_duration={0: 10},
         seq_name_to_idx_map={"seq0": 0},
     )
@@ -959,9 +965,10 @@ def test_get_integration_data(make_qrm_component, mock_acquisition_data):
     )
     formatted_acquisitions = acq_manager._get_integration_data(
         acq_indices=list(range(10)),
-        acquisitions=mock_acquisition_data,
+        hardware_retrieved_acquisitions=mock_acquisition_data,
         acquisition_metadata=acq_metadata,
         acq_duration=10,
+        qblox_acq_index=0,
         acq_channel=0,
     )
 
@@ -1156,7 +1163,7 @@ def test_get_configuration_manager(
 
 
 @pytest.mark.parametrize(
-    ("module_type, io_name, channel_map_parameters"),
+    ("module_type, channel_name, channel_map_parameters"),
     [
         (
             "QCM",
@@ -1315,7 +1322,7 @@ def test_get_configuration_manager(
 def test_channel_map(
     make_cluster_component,
     module_type,
-    io_name,
+    channel_name,
     channel_map_parameters,
 ):
     # Indices according to `make_cluster_component` instrument setup
@@ -1329,7 +1336,7 @@ def test_channel_map(
             "ref": "internal",
             test_module_name: {
                 "instrument_type": module_type,
-                io_name: {
+                channel_name: {
                     "portclock_configs": [{"port": "q5:mw", "clock": "q5.01"}],
                 },
             },
@@ -1337,9 +1344,9 @@ def test_channel_map(
     }
 
     if "RF" in module_type:
-        hardware_config["cluster0"][test_module_name][io_name]["portclock_configs"][0][
-            "interm_freq"
-        ] = 3e5
+        hardware_config["cluster0"][test_module_name][channel_name][
+            "portclock_configs"
+        ][0]["interm_freq"] = 3e5
         freq_01 = 5e9
     else:
         freq_01 = 4.33e8

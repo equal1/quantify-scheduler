@@ -1,6 +1,6 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
-"""Functions for drawing pulse diagrams"""
+"""Functions for drawing pulse diagrams."""
 from __future__ import annotations
 
 import inspect
@@ -21,7 +21,9 @@ import quantify_scheduler.operations.pulse_library as pl
 from quantify_scheduler.helpers.importers import import_python_object_from_string
 from quantify_scheduler.helpers.waveforms import modulate_waveform
 from quantify_scheduler.operations.acquisition_library import AcquisitionOperation
-from quantify_scheduler.operations.stitched_pulse import convert_to_numerical_pulse
+from quantify_scheduler.backends.qblox.operations.stitched_pulse import (
+    convert_to_numerical_pulse,
+)
 
 if TYPE_CHECKING:
     from quantify_scheduler import CompiledSchedule, Operation, Schedule
@@ -30,13 +32,11 @@ logger = logging.getLogger(__name__)
 
 
 def _populate_port_mapping(schedule, portmap: Dict[str, int], ports_length) -> None:
-    """
-    Dynamically add up to 8 ports to the port_map dictionary.
-    """
+    """Dynamically add up to 8 ports to the port_map dictionary."""
     offset_idx: int = 0
 
     for schedulable in schedule.schedulables.values():
-        operation = schedule.operations[schedulable["operation_repr"]]
+        operation = schedule.operations[schedulable["operation_id"]]
         for operation_info in operation["pulse_info"] + operation["acquisition_info"]:
             if offset_idx == ports_length:
                 return
@@ -60,7 +60,7 @@ def validate_operation_data(operation_data, port_map, schedulable, operation):
         logger.warning(
             "Unable to sample waveform for operation_data due to missing 'port' for "
             f"operation name={operation['name']} "
-            f"id={schedulable['operation_repr']} operation_data={operation_data}"
+            f"id={schedulable['operation_id']} operation_data={operation_data}"
         )
         return False
 
@@ -69,7 +69,7 @@ def validate_operation_data(operation_data, port_map, schedulable, operation):
             logger.warning(
                 "Unable to sample pulse for pulse_info due to missing 'wf_func' for "
                 f"operation name={operation['name']} "
-                f"id={schedulable['operation_repr']} operation_data={operation_data}"
+                f"id={schedulable['operation_id']} operation_data={operation_data}"
             )
             return False
     return True
@@ -91,11 +91,11 @@ def pulse_diagram_plotly(
     Produce a plotly visualization of the pulses used in the schedule.
 
     Parameters
-    ------------
+    ----------
     schedule :
         The schedule to render.
     port_list :
-        A list of ports to show. if set to `None` will use the first
+        A list of ports to show. if set to ``None`` will use the first
         8 ports it encounters in the sequence.
     fig_ch_height :
         Height for each channel subplot in px.
@@ -113,7 +113,6 @@ def pulse_diagram_plotly(
     :class:`plotly.graph_objects.Figure` :
         the plot
     """
-
     port_map: Dict[str, int] = {}
     ports_length: int = 8
 
@@ -137,7 +136,7 @@ def pulse_diagram_plotly(
     col_idx: int = 0
 
     for pulse_idx, schedulable in enumerate(schedule.schedulables.values()):
-        operation = schedule.operations[schedulable["operation_repr"]]
+        operation = schedule.operations[schedulable["operation_id"]]
 
         if operation.has_voltage_offset:
             operation = convert_to_numerical_pulse(
@@ -334,7 +333,7 @@ def sample_schedule(
     schedule :
         The schedule to render.
     port_list :
-        A list of ports to show. if set to `None` will use the first
+        A list of ports to show. if set to ``None`` will use the first
         8 ports it encounters in the sequence.
     modulation :
         Determines if modulation is included in the visualization.
@@ -370,7 +369,7 @@ def sample_schedule(
 
     min_x, max_x = x_range
     for schedulable in schedule.schedulables.values():
-        operation = schedule.operations[schedulable["operation_repr"]]
+        operation = schedule.operations[schedulable["operation_id"]]
 
         if operation.has_voltage_offset:
             operation = convert_to_numerical_pulse(
@@ -436,7 +435,8 @@ def sample_schedule(
 
 
 def deduplicate_legend_handles_labels(ax: mpl.axes.Axes) -> None:
-    """Remove duplicate legend entries.
+    """
+    Remove duplicate legend entries.
 
     See also: https://stackoverflow.com/a/13589144
     """
@@ -449,7 +449,8 @@ def plot_single_subplot_mpl(
     sampled_schedule: Dict[str, List[SampledPulse]],
     ax: Optional[mpl.axes.Axes] = None,
 ) -> Tuple[mpl.figure.Figure, mpl.axes.Axes]:
-    """Plot all pulses for all ports in the schedule in the same subplot.
+    """
+    Plot all pulses for all ports in the schedule in the same subplot.
 
     Pulses in the same port have the same color and legend entry, and each port
     has its own legend entry.
@@ -459,7 +460,7 @@ def plot_single_subplot_mpl(
     sampled_schedule :
         Dictionary that maps each used port to the sampled pulses played on that port.
     ax :
-        A pre-existing Axes object to plot the pulses in. If `None` (default), this object is
+        A pre-existing Axes object to plot the pulses in. If ``None`` (default), this object is
         created within the function.
 
     Returns
@@ -499,7 +500,8 @@ def plot_single_subplot_mpl(
 def plot_multiple_subplots_mpl(
     sampled_schedule: Dict[str, List[SampledPulse]]
 ) -> Tuple[mpl.figure.Figure, List[mpl.axes.Axes]]:
-    """Plot pulses in a different subplot for each port in the sampled schedule.
+    """
+    Plot pulses in a different subplot for each port in the sampled schedule.
 
     For each subplot, each different type of pulse gets its own color and legend
     entry.
@@ -574,7 +576,7 @@ def pulse_diagram_matplotlib(
     schedule :
         The schedule to plot.
     port_list :
-        A list of ports to show. If `None` (default) the first 8 ports
+        A list of ports to show. If ``None`` (default) the first 8 ports
         encountered in the sequence are used.
     sampling_rate :
         The time resolution used to sample the schedule in Hz. By default 1e9.
@@ -637,6 +639,7 @@ def get_window_operations(
     ----------
     schedule:
         Schedule to use.
+
     Returns
     -------
     :
@@ -644,7 +647,7 @@ def get_window_operations(
     """
     window_operations = []
     for _, schedulable in enumerate(schedule.schedulables.values()):
-        operation = schedule.operations[schedulable["operation_repr"]]
+        operation = schedule.operations[schedulable["operation_id"]]
         if isinstance(operation, pl.WindowOperation):
             for pulse_info in operation["pulse_info"]:
                 t0 = schedulable["abs_time"] + pulse_info["t0"]
@@ -716,6 +719,7 @@ def plot_acquisition_operations(
         Axis handle to use for plotting.
     kwargs:
         Passed to matplotlib plotting routine
+
     Returns
     -------
     :
@@ -727,7 +731,7 @@ def plot_acquisition_operations(
     handles_list = []
     for idx, schedulable in enumerate(schedule.schedulables.values()):
         _ = idx  # unused variable
-        operation = schedule.operations[schedulable["operation_repr"]]
+        operation = schedule.operations[schedulable["operation_id"]]
         if isinstance(operation, AcquisitionOperation):
             t0 = schedulable["abs_time"] + operation.data["acquisition_info"][0]["t0"]
             t1 = t0 + operation.duration

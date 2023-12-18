@@ -72,7 +72,8 @@ autoapi_template_dir = "_templates"
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "qcodes": ("https://qcodes.github.io/Qcodes/", None),
-    "xarray": ("https://xarray.pydata.org/en/stable/", None),
+    "xarray": ("https://docs.xarray.dev/en/stable/", None),
+    "networkx": ("https://networkx.org/documentation/stable/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "pandas": ("https://pandas.pydata.org/pandas-docs/dev/", None),
     "plotly": ("https://plotly.com/python-api-reference/", None),
@@ -81,10 +82,10 @@ intersphinx_mapping = {
     "dateutil": ("https://dateutil.readthedocs.io/en/stable/", None),
     "fastjsonschema": ("https://horejsek.github.io/python-fastjsonschema/", None),
     "quantify-core": (
-        "https://quantify-os.org/docs/quantify-core/latest/",
+        "https://quantify-os.org/docs/quantify-core/dev/",
         None,
     ),
-    "scipy": ("https://docs.scipy.org/doc/scipy/reference/", None),
+    "scipy": ("https://docs.scipy.org/doc/scipy/", None),
     "qblox-instruments": (
         "https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/",
         None,
@@ -120,7 +121,15 @@ language = "en"
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This patterns also effect to html_static_path and html_extra_path
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "dev/profiling/metrics.py",
+    "dev/profiling/random_gates.py",
+    "dev/profiling/resonator_spectroscopy.py",
+    "dev/profiling/simple_binned_acquisition.py",
+]
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = "sphinx"
@@ -153,6 +162,8 @@ html_theme_options: Dict[str, Any] = {
         "image_light": "QUANTIFY_SCHEDULER_FLAT.svg",
         "image_dark": "QUANTIFY_SCHEDULER_FLAT_DM.svg",
     },
+    "navigation_with_keys": False,
+    "show_version_warning_banner": False,
 }
 
 # Add any paths that contain custom static files (such as style sheets) here,
@@ -251,7 +262,7 @@ autoapi_options = [
     # "imported-members",
 ]
 # displays docstrings inside __init__
-autoapi_python_class_content = "both"
+autoapi_python_class_content = "class"
 
 # avoid duplicate label warning even when manual label has been used;
 suppress_warnings = [
@@ -363,6 +374,9 @@ nb_execution_raise_on_error = True
 # Default cell execution timeout.
 nb_execution_timeout = 120
 
+# Exclude notebooks from execution
+nb_execution_excludepatterns = ["source/dev/profiling/*.ipynb"]
+
 # Configure pydata-sphinx-theme version switcher based on detected CI environment
 # variables.
 if (git_tag := os.environ.get("CI_COMMIT_TAG")) is not None and re.match(
@@ -374,7 +388,7 @@ elif (
     and (default_branch := os.environ.get("CI_DEFAULT_BRANCH"))
     and branch == default_branch
 ):
-    switcher_version = "latest"
+    switcher_version = "dev"
 else:
     switcher_version = None
 
@@ -440,6 +454,11 @@ nitpick_ignore = [
     ("py:class", "quantify_scheduler.Resource"),
     ("py:obj", "quantify_scheduler.structure.DataStructure"),
     ("py:obj", "quantify_scheduler.backends.SerialCompiler"),
+    ("py:obj", "quantify_scheduler.backends.qblox.operations.StitchedPulseBuilder"),
+    ("py:obj", "quantify_scheduler.backends.qblox.operations.VoltageOffset"),
+    ("py:obj", "quantify_scheduler.backends.qblox.operations.long_ramp_pulse"),
+    ("py:obj", "quantify_scheduler.backends.qblox.operations.long_square_pulse"),
+    ("py:obj", "quantify_scheduler.backends.qblox.operations.staircase_pulse"),
     ("py:obj", "quantify_scheduler.schedules.heterodyne_spec_sched"),
     ("py:obj", "quantify_scheduler.schedules.heterodyne_spec_sched_nco"),
     ("py:obj", "quantify_scheduler.schedules.nv_dark_esr_sched"),
@@ -467,6 +486,7 @@ nitpick_ignore = [
     ("py:class", "InputAttenuation"),
     ("py:class", "typing.AnnotatedAlias"),
     ("py:obj", "quantify_scheduler.structure.NDArray"),
+    ("py:obj", "quantify_scheduler.structure.Graph"),
     ("py:attr", "BasicTransmonElement.measure.acq_threshold"),
     ("py:attr", "BasicTransmonElement.measure.acq_rotation"),
 ]  # Tuple[str, str], ignore certain warnings
@@ -495,3 +515,23 @@ with open("nitpick-exceptions.txt", encoding="utf-8") as nitpick_exceptions:
         dtype, target = line.split(None, 1)
         target = target.strip()
         nitpick_ignore.append((dtype, target))
+
+
+def maybe_skip_member(app, what, name, obj, skip, options):
+    """Prevent creating conflicting reference targets for sphinx."""
+    deprecated_objs = [
+        "quantify_scheduler.operations.stitched_pulse.StitchedPulse",
+        "quantify_scheduler.operations.stitched_pulse.convert_to_numerical_pulse",
+        "quantify_scheduler.operations.stitched_pulse.StitchedPulseBuilder",
+        "quantify_scheduler.operations.pulse_factories.long_ramp_pulse",
+        "quantify_scheduler.operations.pulse_factories.long_square_pulse",
+        "quantify_scheduler.operations.pulse_factories.staircase_pulse",
+        "quantify_scheduler.operations.pulse_library.VoltageOffset",
+    ]
+    if str(name) in deprecated_objs:
+        return True
+    return skip
+
+
+def setup(app):
+    app.connect("autoapi-skip-member", maybe_skip_member)

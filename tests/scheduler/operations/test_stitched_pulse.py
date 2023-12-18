@@ -2,20 +2,28 @@
 import numpy as np
 import pytest
 
+from quantify_scheduler.backends.qblox.operations import VoltageOffset, long_ramp_pulse
+from quantify_scheduler.backends.qblox.operations.stitched_pulse import (
+    StitchedPulse,
+    StitchedPulseBuilder,
+    convert_to_numerical_pulse,
+)
 from quantify_scheduler.operations.acquisition_library import Trace
 from quantify_scheduler.operations.gate_library import Rxy
 from quantify_scheduler.operations.operation import Operation
-from quantify_scheduler.operations.pulse_factories import long_ramp_pulse
 from quantify_scheduler.operations.pulse_library import (
     RampPulse,
     ReferenceMagnitude,
     SquarePulse,
-    VoltageOffset,
 )
 from quantify_scheduler.operations.stitched_pulse import (
-    StitchedPulse,
-    StitchedPulseBuilder,
-    convert_to_numerical_pulse,
+    StitchedPulse as OldStitchedPulse,
+)
+from quantify_scheduler.operations.stitched_pulse import (
+    StitchedPulseBuilder as OldStitchedPulseBuilder,
+)
+from quantify_scheduler.operations.stitched_pulse import (
+    convert_to_numerical_pulse as old_convert_to_numerical_pulse,
 )
 
 
@@ -30,7 +38,7 @@ def test_str():
     pulse = (
         StitchedPulseBuilder(port="q0:mw", clock="q0.01")
         .add_pulse(SquarePulse(amp=0.2, duration=1e-6, port="q0:mw", clock="q0.01"))
-        .add_voltage_offset(path_0=0.5, path_1=0.0, duration=1e-7)
+        .add_voltage_offset(path_I=0.5, path_Q=0.0, duration=1e-7)
         .build()
     )
     assert eval(str(pulse)) == pulse  # pylint: disable=eval-used # nosec
@@ -41,7 +49,7 @@ def test_add_operation_wrong_clock():
     pulse = (
         StitchedPulseBuilder(port="q0:mw", clock="q0.01")
         .add_pulse(SquarePulse(amp=0.2, duration=1e-6, port="q0:mw", clock="q0.01"))
-        .add_voltage_offset(path_0=0.5, path_1=0.0, duration=1e-7)
+        .add_voltage_offset(path_I=0.5, path_Q=0.0, duration=1e-7)
         .build()
     )
     with pytest.raises(ValueError):
@@ -58,8 +66,8 @@ def test_add_operation_wrong_clock():
     with pytest.raises(ValueError):
         pulse.add_pulse(
             VoltageOffset(
-                offset_path_0=0.5,
-                offset_path_1=0.0,
+                offset_path_I=0.5,
+                offset_path_Q=0.0,
                 duration=1e-7,
                 t0=1e-6,
                 port="q0:res",
@@ -74,7 +82,7 @@ def test_set_port_clock_t0():
         StitchedPulseBuilder()
         .add_pulse(SquarePulse(amp=0.2, duration=1e-6, port="q0:mw"))
         .add_pulse(RampPulse(amp=0.5, duration=28e-9, port="q0:mw"))
-        .add_voltage_offset(path_0=0.5, path_1=0.0, duration=1e-7)
+        .add_voltage_offset(path_I=0.5, path_Q=0.0, duration=1e-7)
     )
     builder.set_clock("q0.01")
     builder.set_port("q0:mw")
@@ -91,7 +99,7 @@ def test_no_port_clock_fails():
         StitchedPulseBuilder()
         .add_pulse(SquarePulse(amp=0.2, duration=1e-6, port="q0:mw"))
         .add_pulse(RampPulse(amp=0.5, duration=28e-9, port="q0:mw"))
-        .add_voltage_offset(path_0=0.5, path_1=0.0, duration=1e-7)
+        .add_voltage_offset(path_I=0.5, path_Q=0.0, duration=1e-7)
     )
     with pytest.raises(RuntimeError):
         _ = builder.build()
@@ -102,7 +110,7 @@ def test_no_port_clock_fails():
     [
         Trace(1e-6, "q0:mw", "q0.ro"),
         Rxy(0.5, 0.1, "q0"),
-        VoltageOffset(offset_path_0=0.5, offset_path_1=0.0, duration=1e-7),
+        VoltageOffset(offset_path_I=0.5, offset_path_Q=0.0, port="q0:mw"),
     ],
 )
 def test_must_add_pulse(wrong: Operation):
@@ -119,8 +127,8 @@ def test_add_operations():
         .add_pulse(SquarePulse(amp=0.2, duration=1e-6, port="q0:mw", clock="q0.01"))
         .add_pulse(RampPulse(amp=0.5, duration=28e-9, port="q0:mw", clock="q0.01"))
         .add_voltage_offset(
-            path_0=0.5,
-            path_1=0.0,
+            path_I=0.5,
+            path_Q=0.0,
             duration=1e-7,
             reference_magnitude=ReferenceMagnitude(1, "V"),
         )
@@ -132,7 +140,6 @@ def test_add_operations():
         "reference_magnitude": None,
         "clock": "q0.01",
         "duration": 1e-06,
-        "phase": 0,
         "port": "q0:mw",
         "t0": 0,
         "wf_func": "quantify_scheduler.waveforms.square",
@@ -149,9 +156,9 @@ def test_add_operations():
     }
     assert pulse.data["pulse_info"][2] == {
         "clock": "q0.01",
-        "duration": 1e-07,
-        "offset_path_0": 0.5,
-        "offset_path_1": 0.0,
+        "duration": 0.0,
+        "offset_path_I": 0.5,
+        "offset_path_Q": 0.0,
         "port": "q0:mw",
         "t0": 1.028e-06,
         "wf_func": None,
@@ -160,8 +167,8 @@ def test_add_operations():
     assert pulse.data["pulse_info"][3] == {
         "clock": "q0.01",
         "duration": 0.0,
-        "offset_path_0": 0.0,
-        "offset_path_1": 0.0,
+        "offset_path_I": 0.0,
+        "offset_path_Q": 0.0,
         "port": "q0:mw",
         "t0": 1.128e-06,
         "wf_func": None,
@@ -176,7 +183,7 @@ def test_add_operations_insert_timing():
         .add_pulse(SquarePulse(amp=0.2, duration=1e-6, port="q0:mw", clock="q0.01"))
         .add_pulse(RampPulse(amp=0.5, duration=28e-9, port="q0:mw", clock="q0.01"))
         .add_voltage_offset(
-            path_0=0.5, path_1=0.0, duration=1e-7, rel_time=5e-7, append=False
+            path_I=0.5, path_Q=0.0, duration=1e-7, rel_time=5e-7, append=False
         )
         .build()
     )
@@ -186,7 +193,6 @@ def test_add_operations_insert_timing():
         "reference_magnitude": None,
         "clock": "q0.01",
         "duration": 1e-06,
-        "phase": 0,
         "port": "q0:mw",
         "t0": 0,
         "wf_func": "quantify_scheduler.waveforms.square",
@@ -203,9 +209,9 @@ def test_add_operations_insert_timing():
     }
     assert pulse.data["pulse_info"][2] == {
         "clock": "q0.01",
-        "duration": 1e-07,
-        "offset_path_0": 0.5,
-        "offset_path_1": 0.0,
+        "duration": 0.0,
+        "offset_path_I": 0.5,
+        "offset_path_Q": 0.0,
         "port": "q0:mw",
         "t0": 5e-7,
         "wf_func": None,
@@ -214,8 +220,8 @@ def test_add_operations_insert_timing():
     assert pulse.data["pulse_info"][3] == {
         "clock": "q0.01",
         "duration": 0.0,
-        "offset_path_0": 0.0,
-        "offset_path_1": 0.0,
+        "offset_path_I": 0.0,
+        "offset_path_Q": 0.0,
         "port": "q0:mw",
         "t0": 6e-7,
         "wf_func": None,
@@ -274,3 +280,67 @@ def test_convert_to_numerical_mixed_operation():
 
     assert isinstance(num_pulse, StitchedPulse)
     assert num_pulse.data["gate_info"] == dummy_gate_info
+
+
+def test_deprecated_funcs_and_classes_warn():
+    with pytest.warns(
+        FutureWarning,
+        match="0.20.0",
+    ):
+        stitched = OldStitchedPulse(pulse_info=[{"t0": 0, "duration": 0}])
+    # Check if correct object got created
+    assert isinstance(stitched, StitchedPulse)
+    # Check if object is fully initialized
+    assert stitched.data["pulse_info"][0]["t0"] == 0
+    assert stitched.data["pulse_info"][0]["duration"] == 0
+    with pytest.warns(
+        FutureWarning,
+        match="0.20.0",
+    ):
+        builder = OldStitchedPulseBuilder(port="port")
+    assert isinstance(builder, StitchedPulseBuilder)
+    assert builder._port == "port"  # pylint: disable=no-member
+    with pytest.warns(
+        FutureWarning,
+        match="0.20.0",
+    ):
+        old_convert_to_numerical_pulse(  # pylint: disable=too-many-function-args
+            long_ramp_pulse(
+                amp=0.5,
+                duration=1e-4,
+                port="some_port",
+                clock="some_clock",
+                offset=-0.25,
+            )
+        )
+
+
+def test_deprecated_path_args():
+    with pytest.warns(FutureWarning, match="0.20.0"):
+        # pylint: disable=unused-variable,unexpected-keyword-arg,no-value-for-parameter
+        pulse = (
+            StitchedPulseBuilder(port="q0:mw", clock="q0.01")  # type: ignore
+            .add_pulse(SquarePulse(amp=0.2, duration=1e-6, port="q0:mw", clock="q0.01"))
+            .add_pulse(RampPulse(amp=0.5, duration=28e-9, port="q0:mw", clock="q0.01"))
+            .add_voltage_offset(
+                path_0=0.5, path_1=0.0, duration=1e-7, rel_time=5e-7, append=False  # type: ignore
+            )
+            .build()
+        )
+    with pytest.raises(TypeError, match="0.20.0"):
+        # pylint: disable=unexpected-keyword-arg
+        pulse = (
+            StitchedPulseBuilder(port="q0:mw", clock="q0.01")  # type: ignore
+            .add_pulse(SquarePulse(amp=0.2, duration=1e-6, port="q0:mw", clock="q0.01"))
+            .add_pulse(RampPulse(amp=0.5, duration=28e-9, port="q0:mw", clock="q0.01"))
+            .add_voltage_offset(
+                path_I=0.5,
+                path_Q=0.0,
+                path_0=0.5,  # type: ignore
+                path_1=0.0,  # type: ignore
+                duration=1e-7,
+                rel_time=5e-7,
+                append=False,
+            )
+            .build()
+        )

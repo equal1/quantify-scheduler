@@ -3,45 +3,49 @@
 """Schedule helper functions."""
 from __future__ import annotations
 
-from itertools import chain
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from itertools import chain, count
+from typing import TYPE_CHECKING, Any, Hashable
 
 import numpy as np
+
 from quantify_scheduler.helpers.collections import make_hash, without
 from quantify_scheduler.schedules.schedule import (
+    AcquisitionChannelMetadata,
     AcquisitionMetadata,
     CompiledSchedule,
+    Schedule,
     ScheduleBase,
 )
 
-from quantify_scheduler.operations.operation import Operation
-from quantify_scheduler.schedules.schedule import Schedule
+if TYPE_CHECKING:
+    from quantify_scheduler.operations.operation import Operation
 
 
-def get_pulse_uuid(pulse_info: Dict[str, Any], excludes: List[str] = None) -> int:
+def get_pulse_uuid(pulse_info: dict[str, Any], excludes: list[str] = None) -> int:
     """
-    Returns an unique identifier for a pulse.
+    Return an unique identifier for a pulse.
 
     Parameters
     ----------
     pulse_info
         The pulse information dictionary.
+    excludes
+        A list of keys to exclude.
 
     Returns
     -------
     :
         The uuid hash.
     """
-
     if excludes is None:
         excludes = ["t0"]
 
     return make_hash(without(pulse_info, excludes))
 
 
-def get_acq_uuid(acq_info: Dict[str, Any]) -> int:
+def get_acq_uuid(acq_info: dict[str, Any]) -> int:
     """
-    Returns an unique identifier for a acquisition protocol.
+    Return an unique identifier for a acquisition protocol.
 
     Parameters
     ----------
@@ -53,13 +57,12 @@ def get_acq_uuid(acq_info: Dict[str, Any]) -> int:
     :
         The uuid hash.
     """
-
     return make_hash(without(acq_info, ["t0", "waveforms"]))
 
 
 def get_total_duration(schedule: CompiledSchedule) -> float:
     """
-    Returns the total schedule duration in seconds.
+    Return the total schedule duration in seconds.
 
     Parameters
     ----------
@@ -71,12 +74,11 @@ def get_total_duration(schedule: CompiledSchedule) -> float:
     :
         Duration in seconds.
     """
-
     if len(schedule.schedulables) == 0:
         return 0.0
 
-    def _get_operation_end(pair: Tuple[int, dict]) -> float:
-        """Returns the operations end time in seconds."""
+    def _get_operation_end(pair: tuple[int, dict]) -> float:
+        """Return the operations end time in seconds."""
         (timeslot_index, _) = pair
         return get_operation_end(
             schedule,
@@ -99,24 +101,25 @@ def get_operation_start(
     timeslot_index: int,
 ) -> float:
     """
-    Returns the start of an operation in seconds.
+    Return the start of an operation in seconds.
 
     Parameters
     ----------
     schedule
+        The schedule
     timeslot_index
+        The index of the operation in the schedule.
 
     Returns
     -------
     :
         The Operation start time in Seconds.
     """
-
     if len(schedule.schedulables) == 0:
         return 0.0
 
     schedulable = list(schedule.schedulables.values())[timeslot_index]
-    operation = schedule.operations[schedulable["operation_repr"]]
+    operation = schedule.operations[schedulable["operation_id"]]
 
     t0: float = schedulable["abs_time"]
 
@@ -144,24 +147,25 @@ def get_operation_end(
     timeslot_index: int,
 ) -> float:
     """
-    Returns the end of an operation in seconds.
+    Return the end of an operation in seconds.
 
     Parameters
     ----------
     schedule
+        The schedule
     timeslot_index
+        The index of the operation in the schedule.
 
     Returns
     -------
     :
         The Operation end time in Seconds.
     """
-
     if len(schedule.schedulables) == 0:
         return 0.0
 
     schedulable = list(schedule.schedulables.values())[timeslot_index]
-    operation: Operation = schedule.operations[schedulable["operation_repr"]]
+    operation: Operation = schedule.operations[schedulable["operation_id"]]
     t0: float = schedulable["abs_time"]
 
     return t0 + operation.duration
@@ -169,10 +173,9 @@ def get_operation_end(
 
 def get_port_timeline(
     schedule: CompiledSchedule,
-) -> Dict[str, Dict[int, List[int]]]:
+) -> dict[str, dict[int, list[int]]]:
     """
-    Returns a new dictionary containing the timeline of
-    pulses, readout- and acquisition pulses of a port.
+    Return a new dictionary containing the port timeline.
 
     Using iterators on this collection enables sorting.
 
@@ -190,8 +193,7 @@ def get_port_timeline(
     schedule
         The schedule.
     """
-
-    port_timeline_dict: Dict[str, Dict[int, List[int]]] = {}
+    port_timeline_dict: dict[str, dict[int, list[int]]] = {}
 
     # Sort timing constraints based on abs_time and keep the original index.
     schedulables_map = dict(
@@ -205,7 +207,7 @@ def get_port_timeline(
     )
 
     for timeslot_index, schedulable in schedulables_map.items():
-        operation = schedule.operations[schedulable["operation_repr"]]
+        operation = schedule.operations[schedulable["operation_id"]]
         abs_time = schedulable["abs_time"]
 
         pulse_info_iter = map(
@@ -237,24 +239,25 @@ def get_port_timeline(
 
 def get_schedule_time_offset(
     schedule: CompiledSchedule,
-    port_timeline_dict: Dict[str, Dict[int, List[int]]],
+    port_timeline_dict: dict[str, dict[int, list[int]]],
 ) -> float:
     """
-    Returns the start time in seconds of the first pulse
-    in the CompiledSchedule. The "None" port containing the Reset
-    Operation will be ignored.
+    Return the start time in seconds of the first pulse in the CompiledSchedule.
+
+    The "None" port containing the Reset Operation will be ignored.
 
     Parameters
     ----------
     schedule
+        The schedule.
     port_timeline_dict
+        Dictionary containing port timelines.
 
     Returns
     -------
     :
         The operation t0 in seconds.
     """
-
     return min(
         map(
             lambda port: get_operation_start(
@@ -271,20 +274,18 @@ def get_schedule_time_offset(
 
 def get_pulse_info_by_uuid(
     schedule: CompiledSchedule,
-) -> Dict[int, Dict[str, Any]]:
+) -> dict[int, dict[str, Any]]:
     """
-    Returns a lookup dictionary of pulses with its
-    hash as unique identifiers.
+    Return a lookup dictionary of pulses with its hash as unique identifiers.
 
     Parameters
     ----------
     schedule
         The schedule.
     """
-
-    pulseid_pulseinfo_dict: Dict[int, Dict[str, Any]] = {}
+    pulseid_pulseinfo_dict: dict[int, dict[str, Any]] = {}
     for schedulable in schedule.schedulables.values():
-        operation = schedule.operations[schedulable["operation_repr"]]
+        operation = schedule.operations[schedulable["operation_id"]]
         for pulse_info in operation["pulse_info"]:
             pulse_id = get_pulse_uuid(pulse_info)
             if pulse_id in pulseid_pulseinfo_dict:
@@ -305,20 +306,18 @@ def get_pulse_info_by_uuid(
     return pulseid_pulseinfo_dict
 
 
-def get_acq_info_by_uuid(schedule: CompiledSchedule) -> Dict[int, Dict[str, Any]]:
+def get_acq_info_by_uuid(schedule: CompiledSchedule) -> dict[int, dict[str, Any]]:
     """
-    Returns a lookup dictionary of unique identifiers
-    of acquisition information.
+    Return a lookup dictionary of unique identifiers of acquisition information.
 
     Parameters
     ----------
     schedule
         The schedule.
     """
-
-    acqid_acqinfo_dict: Dict[int, Dict[str, Any]] = {}
+    acqid_acqinfo_dict: dict[int, dict[str, Any]] = {}
     for schedulable in schedule.schedulables.values():
-        operation = schedule.operations[schedulable["operation_repr"]]
+        operation = schedule.operations[schedulable["operation_id"]]
 
         for acq_info in operation["acquisition_info"]:
             acq_id = get_acq_uuid(acq_info)
@@ -335,7 +334,7 @@ def extract_acquisition_metadata_from_schedule(
     schedule: ScheduleBase,
 ) -> AcquisitionMetadata:
     """
-    Extracts acquisition metadata from a schedule.
+    Extract acquisition metadata from a schedule.
 
     This function operates under certain assumptions with respect to the schedule.
 
@@ -364,7 +363,6 @@ def extract_acquisition_metadata_from_schedule(
 
     Raises
     ------
-
     AssertionError
 
         If not all acquisition protocols in a schedule are the same.
@@ -373,7 +371,6 @@ def extract_acquisition_metadata_from_schedule(
 
 
     """  # FIXME update when quantify-core!212 spec is ready # pylint: disable=fixme
-
     # a dictionary containing the acquisition indices used for each channel
     acqid_acqinfo_dict = get_acq_info_by_uuid(schedule)
 
@@ -384,10 +381,11 @@ def extract_acquisition_metadata_from_schedule(
 
 
 def extract_acquisition_metadata_from_acquisition_protocols(
-    acquisition_protocols: List[Dict[str, Any]], repetitions: int
+    acquisition_protocols: list[dict[str, Any]], repetitions: int
 ) -> AcquisitionMetadata:
     """
     Private function containing the logic of extract_acquisition_metadata_from_schedule.
+
     The logic is factored out as to work around limitations of the different interfaces
     required.
 
@@ -398,7 +396,18 @@ def extract_acquisition_metadata_from_acquisition_protocols(
     repetitions
         How many times the acquisition was repeated.
     """
-    acq_indices: Dict[int, List[int]] = {}
+    acq_channels_metadata: dict[int, AcquisitionChannelMetadata] = {}
+
+    # Generating hardware indices this way is intended as a temporary solution.
+    # Proper solution: SE-298.
+    acq_channel_to_numeric_key: dict[Hashable, int] = {}
+    numeric_key_counter = count()
+
+    def _to_numeric_key(acq_channel: Hashable) -> int:
+        nonlocal numeric_key_counter
+        if acq_channel not in acq_channel_to_numeric_key:
+            acq_channel_to_numeric_key[acq_channel] = next(numeric_key_counter)
+        return acq_channel_to_numeric_key[acq_channel]
 
     for i, acq_protocol in enumerate(acquisition_protocols):
         if i == 0:
@@ -422,15 +431,20 @@ def extract_acquisition_metadata_from_acquisition_protocols(
             )
 
         # add the individual channel
-        if acq_protocol["acq_channel"] not in acq_indices.keys():
-            acq_indices[acq_protocol["acq_channel"]] = []
-        acq_indices[acq_protocol["acq_channel"]].append(acq_protocol["acq_index"])
+        acq_channel = acq_protocol["acq_channel"]
+        numeric_key = _to_numeric_key(acq_channel)
+        if numeric_key not in acq_channels_metadata:
+            acq_channels_metadata[numeric_key] = AcquisitionChannelMetadata(
+                acq_channel=acq_channel, acq_indices=[]
+            )
+        acq_indices = acq_protocol["acq_index"]
+        acq_channels_metadata[numeric_key].acq_indices.append(acq_indices)
 
     # combine the information in the acq metadata dataclass.
     acq_metadata = AcquisitionMetadata(
         acq_protocol=protocol,
         bin_mode=bin_mode,
-        acq_indices=acq_indices,
+        acq_channels_metadata=acq_channels_metadata,
         acq_return_type=acq_return_type,
         repetitions=repetitions,
     )
@@ -439,7 +453,6 @@ def extract_acquisition_metadata_from_acquisition_protocols(
 
 def _extract_port_clocks_used(schedule: ScheduleBase) -> set[tuple]:
     """Extracts which port-clock combinations are used in a schedule."""
-
     port_clocks_used = set()
     for op_data in schedule.operations.values():
         if isinstance(op_data, Schedule):

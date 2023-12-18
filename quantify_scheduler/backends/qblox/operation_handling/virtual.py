@@ -12,15 +12,16 @@ from quantify_scheduler.backends.types import qblox as types
 
 
 class IdleStrategy(IOperationStrategy):
-    """Defines the behavior for an operation that does not produce any output."""
+    """
+    Defines the behavior for an operation that does not produce any output.
+
+    Parameters
+    ----------
+    operation_info : quantify_scheduler.backends.types.qblox.OpInfo
+        The operation info that corresponds to this operation.
+    """
 
     def __init__(self, operation_info: types.OpInfo):
-        """
-        Parameters
-        ----------
-        operation_info : quantify_scheduler.backends.types.qblox.OpInfo
-            The operation info that corresponds to this operation.
-        """
         self._op_info = operation_info
 
     @property
@@ -51,7 +52,7 @@ class IdleStrategy(IOperationStrategy):
 class NcoPhaseShiftStrategy(IdleStrategy):
     """
     Strategy for operation that does not produce any output, but rather applies a
-    phase shift to the NCO. Implemented as `set_ph_delta` and an `upd_param` of 8 ns,
+    phase shift to the NCO. Implemented as ``set_ph_delta`` and an ``upd_param`` of 8 ns,
     leading to a total duration of 8 ns before the next command can be issued.
     """
 
@@ -81,8 +82,10 @@ class NcoPhaseShiftStrategy(IdleStrategy):
 
 
 class NcoResetClockPhaseStrategy(IdleStrategy):
-    """Strategy for operation that does not produce any output, but rather resets
-    the phase of the NCO."""
+    """
+    Strategy for operation that does not produce any output, but rather resets
+    the phase of the NCO.
+    """
 
     def insert_qasm(self, qasm_program: QASMProgram):
         """
@@ -105,7 +108,7 @@ class NcoResetClockPhaseStrategy(IdleStrategy):
 class NcoSetClockFrequencyStrategy(IdleStrategy):
     """
     Strategy for operation that does not produce any output, but rather sets
-    the frequency of the NCO. Implemented as `set_freq` and an `upd_param` of 8 ns,
+    the frequency of the NCO. Implemented as ``set_freq`` and an ``upd_param`` of 8 ns,
     leading to a total duration of 8 ns before the next command can be issued.
     """
 
@@ -159,37 +162,36 @@ class AwgOffsetStrategy(IdleStrategy):
     """
 
     def insert_qasm(self, qasm_program: QASMProgram):
-        """Add the Q1ASM instruction for a DC voltage offset.
+        """
+        Add the Q1ASM instruction for a DC voltage offset.
 
         Parameters
         ----------
         qasm_program : QASMProgram
             The QASMProgram to add the assembly instructions to.
         """
-        path0_amp = qasm_program.expand_from_normalised_range(
-            val=self.operation_info.data["offset_path_0"],
+        path_I_amp = qasm_program.expand_awg_from_normalised_range(
+            val=self.operation_info.data["offset_path_I"],
             immediate_size=constants.IMMEDIATE_SZ_OFFSET,
-            param="offset_awg_path_0",
+            param="offset_awg_path_I",
             operation=self.operation_info,
         )
-        path1_amp = qasm_program.expand_from_normalised_range(
-            val=self.operation_info.data["offset_path_1"],
+        path_Q_amp = qasm_program.expand_awg_from_normalised_range(
+            val=self.operation_info.data["offset_path_Q"],
             immediate_size=constants.IMMEDIATE_SZ_OFFSET,
-            param="offset_awg_path_1",
+            param="offset_awg_path_Q",
             operation=self.operation_info,
         )
 
         qasm_program.emit(
             q1asm_instructions.SET_AWG_OFFSET,
-            path0_amp,
-            path1_amp,
+            path_I_amp,
+            path_Q_amp,
         )
 
 
 class UpdateParameterStrategy(IdleStrategy):
-    """
-    Strategy for compiling an "update parameters" real-time instruction.
-    """
+    """Strategy for compiling an "update parameters" real-time instruction."""
 
     def insert_qasm(self, qasm_program: QASMProgram):
         """

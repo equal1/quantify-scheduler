@@ -12,7 +12,7 @@ from quantify_scheduler.backends.circuit_to_device import DeviceCompilationConfi
 from quantify_scheduler.backends.graph_compilation import SerialCompiler
 from quantify_scheduler.device_under_test.transmon_element import BasicTransmonElement
 from quantify_scheduler.device_under_test.quantum_device import QuantumDevice
-from quantify_scheduler.json_utils import ScheduleJSONEncoder, ScheduleJSONDecoder
+from quantify_scheduler.json_utils import SchedulerJSONEncoder, SchedulerJSONDecoder
 from quantify_scheduler.operations.gate_library import Measure
 
 
@@ -83,7 +83,7 @@ def test_basic_transmon_serialization(
     q0.rxy.reference_magnitude.dBm(-10)
     q0.measure.reference_magnitude.dBm(-10)
 
-    q0_as_dict = json.loads(json.dumps(q0, cls=ScheduleJSONEncoder))
+    q0_as_dict = json.loads(json.dumps(q0, cls=SchedulerJSONEncoder))
     assert q0_as_dict.__class__ is dict
     assert q0_as_dict["deserialization_type"] == "BasicTransmonElement"
 
@@ -108,6 +108,45 @@ def test_basic_transmon_serialization(
                 f"Expected value {q0.submodules[submodule_name][parameter_name]()} for "
                 f"{submodule_name}.{parameter_name} but got {parameter_val}"
             )
+
+
+def test_basic_transmon_deserialization(q0: BasicTransmonElement, dev: QuantumDevice):
+    """
+    Tests the deserialization process of :class:`~BasicTransmonElement` by comparing the
+    operations inside compiled schedules of the original and the deserialized
+    `BasicTransmonElement` object.
+    """
+
+    q0.measure.acq_channel(0)
+    q0.measure.pulse_amp(0.05)
+    q0.clock_freqs.readout(3e9)
+    dev.add_element(q0)
+
+    sched = Schedule("test_basic_transmon_deserialization")
+    sched.add(Measure(q0.name))
+
+    compiler = SerialCompiler(name="compiler")
+    compiled_sched_q0 = compiler.compile(
+        schedule=sched, config=dev.generate_compilation_config()
+    )
+
+    q0_as_str = json.dumps(q0, cls=SchedulerJSONEncoder)
+    assert q0_as_str.__class__ is str
+
+    q0.close()
+
+    deserialized_q0 = json.loads(q0_as_str, cls=SchedulerJSONDecoder)
+    assert deserialized_q0.__class__ is BasicTransmonElement
+
+    compiled_sched_deserialized_q0 = compiler.compile(
+        schedule=sched, config=dev.generate_compilation_config()
+    )
+    assert compiled_sched_deserialized_q0.operations == compiled_sched_q0.operations, (
+        f"Compiled operations of deserialized '{deserialized_q0.name}' does not match "
+        f"the original's"
+    )
+
+    deserialized_q0.close()
 
 
 def test_reference_magnitude_overwrite_units(q0: BasicTransmonElement):
@@ -145,46 +184,6 @@ def test_reference_magnitude_overwrite_units(q0: BasicTransmonElement):
     assert q0.rxy.reference_magnitude.A() == 1e-3
 
 
-def test_basic_transmon_deserialization(q0: BasicTransmonElement, dev: QuantumDevice):
-    """
-    Tests the deserialization process of :class:`~BasicTransmonElement` by comparing the
-    operations inside compiled schedules of the original and the deserialized
-    `BasicTransmonElement` object.
-    """
-
-    q0.measure.acq_channel(0)
-    q0.measure.pulse_amp(0.05)
-    q0.clock_freqs.readout(3e9)
-    dev.add_element(q0)
-
-    sched = Schedule("test_basic_transmon_deserialization")
-    sched.add(Measure(q0.name))
-
-    compiler = SerialCompiler(name="compiler")
-    compiled_sched_q0 = compiler.compile(
-        schedule=sched, config=dev.generate_compilation_config()
-    )
-
-    q0_as_str = json.dumps(q0, cls=ScheduleJSONEncoder)
-    assert q0_as_str.__class__ is str
-
-    q0.close()
-
-    deserialized_q0 = json.loads(q0_as_str, cls=ScheduleJSONDecoder)
-    assert deserialized_q0.__class__ is BasicTransmonElement
-    dev.add_element(deserialized_q0)
-
-    compiled_sched_deserialized_q0 = compiler.compile(
-        schedule=sched, config=dev.generate_compilation_config()
-    )
-    assert compiled_sched_deserialized_q0.operations == compiled_sched_q0.operations, (
-        f"Compiled operations of deserialized '{deserialized_q0.name}' does not match "
-        f"the original's"
-    )
-
-    deserialized_q0.close()
-
-
 def test_generate_config_measure(q0: BasicTransmonElement):
     """Setting values updates the correct values in the config."""
     # Set values for measure
@@ -209,3 +208,12 @@ def test_generate_config_measure(q0: BasicTransmonElement):
     assert cfg_measure.factory_kwargs["acq_duration"] == 8e-7
     assert cfg_measure.factory_kwargs["acq_channel"] == 123
     assert not cfg_measure.factory_kwargs["reset_clock_phase"]
+
+    # Changing values of the measure
+    q0.measure.acq_channel("ch_123")
+
+    dev_cfg = q0.generate_device_config()
+    cfg_measure = dev_cfg.elements["q0"]["measure"]
+
+    # Assert values are in right place
+    assert cfg_measure.factory_kwargs["acq_channel"] == "ch_123"

@@ -1,30 +1,25 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
-"""
-Module containing the QuantumDevice object.
-"""
+"""Module containing the QuantumDevice object."""
 from __future__ import annotations
 
-from typing import Any, Dict
-from functools import partial
+import json
+import os
+from datetime import datetime, timezone
+from typing import Any
 
 from qcodes.instrument.base import Instrument
 from qcodes.instrument.parameter import InstrumentRefParameter, ManualParameter
 from qcodes.utils import validators
+
+from quantify_core.data.handling import get_datadir
 from quantify_scheduler.backends.circuit_to_device import _compile_circuit_to_device
-from quantify_scheduler.backends.qblox_backend import hardware_compile as qblox_backend
-from quantify_scheduler.backends.qblox_backend import QbloxHardwareCompilationConfig
-from quantify_scheduler.backends.zhinst_backend import compile_backend as zhinst_backend
-from quantify_scheduler.backends.zhinst_backend import ZIHardwareCompilationConfig
 from quantify_scheduler.backends.graph_compilation import (
+    DeviceCompilationConfig,
     SerialCompilationConfig,
     SimpleNodeConfig,
-    DeviceCompilationConfig,
 )
 from quantify_scheduler.backends.types.common import HardwareCompilationConfig
-from quantify_scheduler.backends.qblox_backend import (
-    compile_long_square_pulses_to_awg_offsets,
-)
 from quantify_scheduler.compilation import (
     _determine_absolute_timing,
     flatten_schedule,
@@ -32,21 +27,25 @@ from quantify_scheduler.compilation import (
 )
 from quantify_scheduler.device_under_test.device_element import DeviceElement
 from quantify_scheduler.device_under_test.edge import Edge
+from quantify_scheduler.helpers.importers import import_python_object_from_string
+from quantify_scheduler.json_utils import SchedulerJSONDecoder, SchedulerJSONEncoder
 
 
 class QuantumDevice(Instrument):
     """
-    The QuantumDevice directly represents the device under test (DUT) and contains a
-    description of the connectivity to the control hardware as well as parameters
-    specifying quantities like cross talk, attenuation and calibrated cable-delays.
-    The QuantumDevice also contains references to individual DeviceElements,
-    representations of elements on a device (e.g, a transmon qubit) containing
-    the (calibrated) control-pulse parameters.
+    The QuantumDevice directly represents the device under test (DUT).
+
+    This contains a description of the connectivity to the control hardware as
+    well as parameters specifying quantities like cross talk, attenuation and
+    calibrated cable-delays. The QuantumDevice also contains references to
+    individual DeviceElements, representations of elements on a device (e.g, a
+    transmon qubit) containing the (calibrated) control-pulse parameters.
 
     This object can be used to generate configuration files for the compilation step
     from the gate-level to the pulse level description.
     These configuration files should be compatible with the
-    :meth:`~quantify_scheduler.backends.graph_compilation.QuantifyCompiler.compile` function.
+    :meth:`~quantify_scheduler.backends.graph_compilation.QuantifyCompiler.compile`
+    function.
     """
 
     def __init__(self, name: str) -> None:
@@ -54,20 +53,19 @@ class QuantumDevice(Instrument):
 
         self.elements = ManualParameter(
             "elements",
-            initial_value=dict(),
-            vals=validators.Dict(),
-            docstring="A dictionary with the names of all elements located on this"
-            "QuantumDevice as keys and the corresponding `DeviceElement` objects as values.",
+            initial_value=list(),
+            vals=validators.Lists(validators.Strings()),
+            docstring="A list containing the names of all elements that"
+            " are located on this QuantumDevice.",
             instrument=self,
         )
 
         self.edges = ManualParameter(
             "edges",
-            initial_value=dict(),
-            vals=validators.Dict(),
-            docstring="A dictionary with the names of all the edges which connect the"
-            " `DeviceElement`s within this QuantumDevice as keys and the corresponding"
-            " `Edge` objects as values.",
+            initial_value=list(),
+            vals=validators.Lists(validators.Strings()),
+            docstring="A list containing the names of all the edges which connect the"
+            " DeviceElements within this QuantumDevice",
             instrument=self,
         )
 
@@ -119,7 +117,6 @@ class QuantumDevice(Instrument):
                 "using quantum_device.generate_hardware_compilation_config(). This configures "
                 "the compilation from the quantum-device layer to the control-hardware layer."
             ),
-            vals=validators.Dict(),
             initial_value=None,
             instrument=self,
         )
@@ -131,18 +128,208 @@ class QuantumDevice(Instrument):
             initial_value="asap",
         )
 
-    def generate_compilation_config(self) -> SerialCompilationConfig:
-        """
-        Generates a compilation config for use with a
-        :class:`~.graph_compilation.QuantifyCompiler`.
-        """
+        self._instrument_references = {}
 
-        # Part that is always the same
-        dev_cfg = self.generate_device_config()
+    def __getstate__(self) -> dict[str, Any]:
+        """
+        Serializes :class:`~QuantumDevice` into a dict containing serialized :class:`~DeviceElement`
+        and :class:`~Edge` objects plus ``cfg_sched_repetitions``.
+        """
+        data = {"name": self.name}
+
+        data["elements"] = {
+            element_name: json.dumps(
+                self.get_element(element_name), cls=SchedulerJSONEncoder
+            )
+            for element_name in self.elements()
+        }
+
+        data["edges"] = {
+            edge_name: json.dumps(self.get_edge(edge_name), cls=SchedulerJSONEncoder)
+            for edge_name in self.edges()
+        }
+
+        data["cfg_sched_repetitions"] = str(self.cfg_sched_repetitions())
+
+        state = {
+            "deserialization_type": self.__class__.__name__,
+            "data": data,
+        }
+
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """
+        Deserializes a dict of serialized :class:`~DeviceElement` and :class:`~Edge` objects
+        into a `QuantumDevice`.
+        """
+        self.__init__(state["data"]["name"])
+
+        for element_name, serialized_element in state["data"]["elements"].items():
+            self._instrument_references[element_name] = json.loads(
+                serialized_element, cls=SchedulerJSONDecoder
+            )
+            self.add_element(self._instrument_references[element_name])
+
+        for edge_name, serialized_edge in state["data"]["edges"].items():
+            self._instrument_references[edge_name] = json.loads(
+                serialized_edge, cls=SchedulerJSONDecoder
+            )
+            self.add_edge(self._instrument_references[edge_name])
+
+        self.cfg_sched_repetitions(int(state["data"]["cfg_sched_repetitions"]))
+
+    def to_json(self) -> str:
+        """
+        Convert the :class:`~QuantumDevice` data structure to a JSON string.
+
+        Returns
+        -------
+        :
+            The json string containing the serialized `QuantumDevice`.
+        """
+        device_instruments = []
+        if hasattr(self, "elements"):
+            device_instruments += self.elements()
+        if hasattr(self, "edges"):
+            device_instruments += self.edges()
+        if not device_instruments:
+            raise RuntimeError(
+                f"Cannot serialize '{self.name}'. All attached instruments have been "
+                f"closed and their information cannot be retrieved any longer."
+            )
+
+        closed_instruments = []
+        for device_name in device_instruments:
+            try:
+                Instrument.find_instrument(device_name)
+            except KeyError:
+                closed_instruments.append(device_name)
+        if closed_instruments:
+            raise RuntimeError(
+                f"Cannot serialize '{self.name}'. Instruments '{closed_instruments}' have "
+                f"been closed and their information cannot be retrieved any longer. "
+                f"If you do not wish to include these in the "
+                f"serialization, please remove using `QuantumDevice.remove_element` or "
+                f"`QuantumDevice.remove_edge`."
+            )
+
+        return json.dumps(self, cls=SchedulerJSONEncoder)
+
+    def to_json_file(self, path: str | None = None) -> str:
+        """
+        Convert the `QuantumDevice` data structure to a JSON string and store it in a file.
+
+        Parameters
+        ----------
+        path
+            The path to the directory where the file is created.
+
+        Returns
+        -------
+        :
+            The name of the file containing the serialized `QuantumDevice`.
+        """
+        if path is None:
+            path = get_datadir()
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S_%Z")
+
+        filename = os.path.join(path, f"{self.name}_{timestamp}.json")
+        with open(filename, "w") as file:
+            file.write(self.to_json())
+
+        return filename
+
+    @classmethod
+    def from_json(cls, data: str) -> QuantumDevice:
+        """
+        Convert the JSON data to a `QuantumDevice`.
+
+        Parameters
+        ----------
+        data
+            The JSON data in str format.
+
+        Returns
+        -------
+        :
+            The deserialized :class:`~QuantumDevice` object.
+        """
+        return json.loads(data, cls=SchedulerJSONDecoder)
+
+    @classmethod
+    def from_json_file(cls, filename: str) -> QuantumDevice:
+        """
+        Read JSON data from a file and convert it to a `QuantumDevice`.
+
+        Parameters
+        ----------
+        filename
+            The name of the file containing the serialized `QuantumDevice`.
+
+        Returns
+        -------
+        :
+            The deserialized :class:`~QuantumDevice` object.
+        """
+        with open(filename) as file:
+            deserialized_device = cls.from_json(file.read())
+        return deserialized_device
+
+    def generate_compilation_config(self) -> SerialCompilationConfig:
+        """Generate a config for use with a :class:`~.graph_compilation.QuantifyCompiler`."""
+        return SerialCompilationConfig(
+            name="QuantumDevice-generated SerialCompilationConfig",
+            keep_original_schedule=self.keep_original_schedule(),
+            device_compilation_config=self.generate_device_config(),
+            hardware_compilation_config=self.generate_hardware_compilation_config(),
+        )
+
+    def generate_hardware_config(self) -> dict[str, Any]:
+        """
+        Generate a valid hardware configuration describing the quantum device.
+
+        Returns
+        -------
+            The hardware configuration file used for compiling from the quantum-device
+            layer to a hardware backend.
+
+        .. warning:
+
+            The config currently has to be specified by the user using the
+            :code:`hardware_config` parameter.
+        """
+        return self.hardware_config()
+
+    def generate_device_config(self) -> DeviceCompilationConfig:
+        """
+        Generate a device config.
+
+        This config is used to compile from the quantum-circuit to the
+        quantum-device layer.
+        """
+        clocks = {}
+        elements_cfg = {}
+        edges_cfg = {}
+
+        # iterate over the elements on the device
+        for element_name in self.elements():
+            element = self.get_element(element_name)
+            element_cfg = element.generate_device_config()
+            clocks.update(element_cfg.clocks)
+            elements_cfg.update(element_cfg.elements)
+
+        # iterate over the edges on the device
+        for edge_name in self.edges():
+            edge = self.get_edge(edge_name)
+            edge_cfg = edge.generate_edge_config()
+            edges_cfg.update(edge_cfg)
+
         compilation_passes = [
             SimpleNodeConfig(
                 name="circuit_to_device",
-                compilation_func=dev_cfg.backend,
+                compilation_func=_compile_circuit_to_device,
             ),
             SimpleNodeConfig(
                 name="set_pulse_and_acquisition_clock",
@@ -163,190 +350,100 @@ class QuantumDevice(Instrument):
             ),
         ]
 
-        # If statements to support the different hardware compilation configs.
-        hw_comp_cfg = self.generate_hardware_compilation_config()
-        if hw_comp_cfg is None:
-            backend_name = "Device compiler"
-        elif hw_comp_cfg.backend == qblox_backend:
-            backend_name = "Qblox compiler"
-            compilation_passes.append(
-                SimpleNodeConfig(
-                    name="compile_long_square_pulses_to_awg_offsets",
-                    compilation_func=compile_long_square_pulses_to_awg_offsets,
-                )
-            )
-            compilation_passes.append(
-                SimpleNodeConfig(
-                    name="qblox_hardware_compile",
-                    compilation_func=hw_comp_cfg.backend,
-                )
-            )
-        elif hw_comp_cfg.backend == zhinst_backend:
-            backend_name = "Zhinst compiler"
-            compilation_passes.append(
-                SimpleNodeConfig(
-                    name="zhinst_hardware_compile",
-                    compilation_func=hw_comp_cfg.backend,
-                )
-            )
-
-        else:
-            backend_name = "Custom compiler"
-            compilation_passes.append(
-                SimpleNodeConfig(
-                    name="custom_hardware_compile",
-                    compilation_func=hw_comp_cfg.backend,
-                )
-            )
-
-        compilation_config = SerialCompilationConfig(
-            name=backend_name,
-            keep_original_schedule=self.keep_original_schedule(),
-            device_compilation_config=dev_cfg,
-            hardware_compilation_config=hw_comp_cfg,
-            compilation_passes=compilation_passes,
-        )
-
-        return compilation_config
-
-    def generate_hardware_config(self) -> Dict[str, Any]:
-        """
-        Generates a valid hardware configuration describing the quantum device.
-
-        Returns
-        -------
-            The hardware configuration file used for compiling from the quantum-device
-            layer to a hardware backend.
-
-        .. warning:
-
-            The config currently has to be specified by the user using the
-            :code:`hardware_config` parameter.
-        """
-        return self.hardware_config()
-
-    def generate_device_config(self) -> DeviceCompilationConfig:
-        """
-        Generates a device config to compile from the quantum-circuit to the
-        quantum-device layer.
-        """
-
-        clocks = {}
-        elements_cfg = {}
-        edges_cfg = {}
-
-        # iterate over the elements on the device
-        for element_name in self.elements():
-            element = self.get_element(element_name)
-            element_cfg = element.generate_device_config()
-            clocks.update(element_cfg.clocks)
-            elements_cfg.update(element_cfg.elements)
-
-        # iterate over the edges on the device
-        for edge_name in self.edges():
-            edge = self.get_edge(edge_name)
-            edge_cfg = edge.generate_edge_config()
-            edges_cfg.update(edge_cfg)
-
         device_config = DeviceCompilationConfig(
-            backend=_compile_circuit_to_device,
             elements=elements_cfg,
             clocks=clocks,
             edges=edges_cfg,
             scheduling_strategy=self.scheduling_strategy(),
+            compilation_passes=compilation_passes,
         )
 
         return device_config
 
     def generate_hardware_compilation_config(self) -> HardwareCompilationConfig | None:
         """
-        Generates a hardware compilation config to compile from the quantum-device to the
+        Generate a hardware compilation config.
+
+        The compilation config is used to compile from the quantum-device to the
         control-hardware layer.
         """
-
         hardware_config = self.hardware_config()
         if hardware_config is None:
             return None
-
-        if (
-            hardware_config["backend"]
-            == "quantify_scheduler.backends.qblox_backend.hardware_compile"
-        ):
-            if not any(
-                [
-                    key in hardware_config
-                    for key in [
-                        "hardware_description",
-                        "hardware_options",
-                        "connectivity",
-                    ]
+        elif isinstance(hardware_config, HardwareCompilationConfig):
+            # Hardware config is already a valid HardwareCompilationConfig DataStructure
+            return hardware_config
+        elif not any(
+            [
+                key in hardware_config
+                for key in [
+                    "config_type",
+                    "hardware_description",
+                    "hardware_options",
+                    "connectivity",
                 ]
-            ):
-                # Legacy support for the old hardware config dict:
-                hardware_compilation_config = QbloxHardwareCompilationConfig(
-                    backend=hardware_config["backend"],
-                    hardware_description={},
-                    hardware_options={},
-                    connectivity=hardware_config,
-                )
-            else:
-                hardware_compilation_config = (
-                    QbloxHardwareCompilationConfig.model_validate(hardware_config)
-                )
-        elif (
-            hardware_config["backend"]
-            == "quantify_scheduler.backends.zhinst_backend.compile_backend"
+            ]
         ):
-            if not any(
-                [
-                    key in hardware_config
-                    for key in [
-                        "hardware_description",
-                        "hardware_options",
-                        "connectivity",
-                    ]
-                ]
+            # Legacy support for the old hardware config dict:
+            if (
+                hardware_config["backend"]
+                == "quantify_scheduler.backends.qblox_backend.hardware_compile"
             ):
-                # Legacy support for the old hardware config dict:
-                hardware_compilation_config = ZIHardwareCompilationConfig(
-                    backend=hardware_config["backend"],
-                    hardware_description={},
-                    hardware_options={},
-                    connectivity=hardware_config,
-                )
+                compilation_passes = [
+                    SimpleNodeConfig(
+                        name="compile_long_square_pulses_to_awg_offsets",
+                        compilation_func="quantify_scheduler.backends.qblox_backend"
+                        + ".compile_long_square_pulses_to_awg_offsets",
+                    ),
+                    SimpleNodeConfig(
+                        name="qblox_hardware_compile",
+                        compilation_func=hardware_config["backend"],
+                    ),
+                ]
+            elif (
+                hardware_config["backend"]
+                == "quantify_scheduler.backends.zhinst_backend.compile_backend"
+            ):
+                compilation_passes = [
+                    SimpleNodeConfig(
+                        name="zhinst_compile_backend",
+                        compilation_func=hardware_config["backend"],
+                    ),
+                ]
             else:
-                hardware_compilation_config = (
-                    ZIHardwareCompilationConfig.model_validate(hardware_config)
-                )
+                compilation_passes = [
+                    SimpleNodeConfig(
+                        name="custom_hardware_backend",
+                        compilation_func=hardware_config["backend"],
+                    ),
+                ]
+            hardware_compilation_config = HardwareCompilationConfig(
+                hardware_description={},
+                hardware_options={},
+                connectivity=hardware_config,
+                compilation_passes=compilation_passes,
+            )
         else:
-            if not any(
-                [
-                    key in hardware_config
-                    for key in [
-                        "hardware_description",
-                        "hardware_options",
-                        "connectivity",
-                    ]
-                ]
-            ):
-                # Legacy support for the old hardware config dict:
-                hardware_compilation_config = HardwareCompilationConfig(
-                    backend=hardware_config["backend"],
-                    hardware_description={},
-                    hardware_options={},
-                    connectivity=hardware_config,
+            # Parse a (backend-specific) HardwareCompilationConfig
+            if "backend" in hardware_config:
+                raise ValueError(
+                    f"`{HardwareCompilationConfig.__name__}` no longer takes a"
+                    f" 'backend' field; instead, specify the 'config_type', which should"
+                    " contain a string reference to the backend-specific datastructure"
+                    " that should be parsed."
                 )
-            else:
-                hardware_compilation_config = HardwareCompilationConfig.model_validate(
-                    hardware_config
-                )
+            hardware_compilation_config_model = import_python_object_from_string(
+                hardware_config["config_type"]
+            )
+            hardware_compilation_config = (
+                hardware_compilation_config_model.model_validate(hardware_config)
+            )
 
         return hardware_compilation_config
 
     def get_element(self, name: str) -> DeviceElement:
         """
-        Returns a
-        :class:`~quantify_scheduler.device_under_test.device_element.DeviceElement`
+        Return a :class:`~quantify_scheduler.device_under_test.device_element.DeviceElement`
         by name.
 
         Parameters
@@ -362,16 +459,10 @@ class QuantumDevice(Instrument):
         Raises
         ------
         KeyError
-            If key `name` is not present in `self.elements`.
+            If key ``name`` is not present in `self.elements`.
         """
         if name in self.elements():
-            element = self.elements()[name]
-            if not Instrument.is_valid(element):
-                raise ValueError(
-                    f"{element} of {self.name} is not a valid device element."
-                    f" Please re-create and re-add it."
-                )
-            return element
+            return self.find_instrument(name)
         raise KeyError(f"'{name}' is not an element of {self.name}.")
 
     def add_element(
@@ -379,7 +470,7 @@ class QuantumDevice(Instrument):
         element: DeviceElement,
     ) -> None:
         """
-        Adds an element to the elements collection.
+        Add an element to the elements collection.
 
         Parameters
         ----------
@@ -394,30 +485,28 @@ class QuantumDevice(Instrument):
             If :code:`element` is not an instance of the base element.
         """
         if element.name in self.elements():
-            if Instrument.is_valid(self.elements()[element.name]):
-                # Only raise an error if the element is still valid
-                raise ValueError(f"'{element.name}' has already been added.")
+            raise ValueError(f"'{element.name}' has already been added.")
 
         if not isinstance(element, DeviceElement):
             raise TypeError(f"{repr(element)} is not a DeviceElement.")
 
-        self.elements()[element.name] = element  # dict gets updated in place
+        self.elements().append(element.name)  # list gets updated in place
+        self._instrument_references[element.name] = element
 
     def remove_element(self, name: str) -> None:
         """
-        Removes a element by name.
+        Removes an element by name.
 
         Parameters
         ----------
         name
             The element name.
         """
-
-        self.elements().pop(name)  # dict gets updated in place
+        self.elements().remove(name)  # list gets updated in place
 
     def get_edge(self, name: str) -> Instrument:
         """
-        Returns a edge by name.
+        Returns an edge by name.
 
         Parameters
         ----------
@@ -432,21 +521,15 @@ class QuantumDevice(Instrument):
         Raises
         ------
         KeyError
-            If key `name` is not present in `self.edges`.
+            If key ``name`` is not present in ``self.edges``.
         """
         if name in self.edges():
-            edge = self.edges()[name]
-            if not Instrument.is_valid(edge):
-                raise ValueError(
-                    f"{edge} of {self.name} is not a valid edge."
-                    f" Please re-create and re-add it."
-                )
-            return edge
+            return self.find_instrument(name)
         raise KeyError(f"'{name}' is not an edge of {self.name}.")
 
     def add_edge(self, edge: Edge) -> None:
         """
-        Adds the edges.
+        Add the edges.
 
         Parameters
         ----------
@@ -455,23 +538,21 @@ class QuantumDevice(Instrument):
             'element_0'-'element_1'
         """
         if edge.name in self.edges():
-            if Instrument.is_valid(self.edges()[edge.name]):
-                # Only raise an error if the edge is still valid
-                raise ValueError(f"'{edge.name}' has already been added.")
+            raise ValueError(f"'{edge.name}' has already been added.")
 
         if not isinstance(edge, Edge):
-            raise TypeError(f"{repr(edge)} is not a Edge.")
+            raise TypeError(f"{repr(edge)} is not an Edge.")
 
-        self.edges()[edge.name] = edge  # dict gets updated in place
+        self.edges().append(edge.name)
+        self._instrument_references[edge.name] = edge
 
     def remove_edge(self, edge_name: str) -> None:
         """
-        Removes an edge by name.
+        Remove an edge by name.
 
         Parameters
         ----------
         edge_name
             The edge name.
         """
-
-        self.edges().pop(edge_name)  # dict gets updated in place
+        self.edges().remove(edge_name)  # list gets updated in place

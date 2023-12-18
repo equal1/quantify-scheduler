@@ -22,7 +22,7 @@ import sys
 import time
 import warnings
 import zipfile
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Hashable
 
 import numpy as np
 from qcodes.parameters import Parameter
@@ -57,13 +57,50 @@ class AcquisitionProtocolNotSupportedError(NotImplementedError):
 
 class ScheduleGettable:
     """
-    Generic gettable for a quantify schedule using vector (I,Q) acquisition. Can be
-    set to return either static (demodulated) I and Q values or magnitude and phase.
+    Generic gettable for a quantify schedule using vector (I,Q) acquisition.
 
-    The gettable evaluates the parameters passed as `schedule_kwargs`, then generates
+    The gettable evaluates the parameters passed as ``schedule_kwargs``, then generates
     the :class:`quantify_scheduler.schedules.schedule.Schedule` using the
-    `schedule_function`, this is then compiled and finally executed by the
+    ``schedule_function``, this is then compiled and finally executed by the
     :class:`~.InstrumentCoordinator`.
+
+    ``ScheduleGettable`` can be set to return either static (demodulated) I and Q
+    values or magnitude and phase.
+
+    Parameters
+    ----------
+    quantum_device
+        The qcodes instrument representing the quantum device under test (DUT)
+        containing quantum device properties and setup configuration information.
+    schedule_function
+        A function which returns a
+        :class:`quantify_scheduler.schedules.schedule.Schedule`. The
+        function is required to have the ``repetitions`` keyword argument.
+    schedule_kwargs
+        The schedule function keyword arguments, when a value in this dictionary is
+        a :class:`~qcodes.instrument.parameter.Parameter`, this parameter will be
+        evaluated every time :code:`.get()` is called before being passed to the
+        :code:`schedule_function`.
+    num_channels
+        The number of channels to expect in the acquisition data.
+    data_labels
+        Allows to specify custom labels. Needs to be precisely 2*num_channels if
+        specified. The order is [Voltage I 0, Voltage Q 0, Voltage I 1, Voltage Q 1,
+        ...], in case real_imag==True, otherwise [Magnitude 0, Phase 0, Magnitude 1,
+        Phase 1, ...].
+    real_imag
+        If true, the gettable returns I, Q values. Otherwise, magnitude and phase
+        (degrees) are returned.
+    batched
+        Used to indicate if the experiment is performed in batches or in an
+        iterative fashion.
+    max_batch_size:
+        Determines the maximum number of points to acquire when acquiring in batched
+        mode. Can be used to split up a program in parts if required due to hardware
+        constraints.
+    always_initialize:
+        If True, then reinitialize the schedule on each invocation of ``get``. If
+        False, then only initialize the first invocation of ``get``.
     """
 
     def __init__(
@@ -78,45 +115,6 @@ class ScheduleGettable:
         max_batch_size: int = 1024,
         always_initialize: bool = True,
     ) -> None:
-        """
-        Create a new instance of ScheduleGettable which is used to do I and Q
-        acquisition or alternatively magnitude and phase.
-
-        Parameters
-        ----------
-        quantum_device
-            The qcodes instrument representing the quantum device under test (DUT)
-            containing quantum device properties and setup configuration information.
-        schedule_function
-            A function which returns a
-            :class:`quantify_scheduler.schedules.schedule.Schedule`. The
-            function is required to have the `repetitions` keyword argument.
-        schedule_kwargs
-            The schedule function keyword arguments, when a value in this dictionary is
-            a :class:`~qcodes.instrument.parameter.Parameter`, this parameter will be
-            evaluated every time :code:`.get()` is called before being passed to the
-            :code:`schedule_function`.
-        num_channels
-            The number of channels to expect in the acquisition data.
-        data_labels
-            Allows to specify custom labels. Needs to be precisely 2*num_channels if
-            specified. The order is [Voltage I 0, Voltage Q 0, Voltage I 1, Voltage Q 1,
-            ...], in case real_imag==True, otherwise [Magnitude 0, Phase 0, Magnitude 1,
-            Phase 1, ...].
-        real_imag
-            If true, the gettable returns I, Q values. Otherwise, magnitude and phase
-            (degrees) are returned.
-        batched
-            Used to indicate if the experiment is performed in batches or in an
-            iterative fashion.
-        max_batch_size:
-            Determines the maximum number of points to acquire when acquiring in batched
-            mode. Can be used to split up a program in parts if required due to hardware
-            constraints.
-        always_initialize:
-            If True, then reinitialize the schedule on each invocation of `get`. If
-            False, then only initialize the first invocation of `get`.
-        """
         self._data_labels_specified = data_labels is not None
 
         self.always_initialize = always_initialize
@@ -247,13 +245,13 @@ class ScheduleGettable:
             self.compiled_schedule
         )
 
-        if len(acquired_data) == 0 and len(acq_metadata.acq_indices) != 0:
+        if len(acquired_data) == 0 and len(acq_metadata.acq_channels_metadata) != 0:
             raise RuntimeError(
                 f"InstrumentCoordinator.retrieve_acquisition() "
                 f"('{instr_coordinator.name}') "
                 f"did not return any data, but was expected to return data based on "
                 f"the acquisition metadata in the compiled schedule: "
-                f"{acq_metadata.acq_indices=}"
+                f"{acq_metadata.acq_channels_metadata=}"
             )
 
         result = self.process_acquired_data(acquired_data, acq_metadata)
@@ -309,7 +307,8 @@ class ScheduleGettable:
             If acquisition protocol other than BinMode.APPEND is used.
         """
         dataset = {}
-        for acq_channel, acq_indices in acq_metadata.acq_indices.items():
+        for acq_channel_metadata in acq_metadata.acq_channels_metadata.values():
+            acq_channel: Hashable = acq_channel_metadata.acq_channel
             dataset[acq_channel] = dataset[acq_channel] = (
                 acquired_data[acq_channel].sel(repetition=0).values
             )
@@ -364,7 +363,8 @@ class ScheduleGettable:
             and acq_metadata.bin_mode == BinMode.AVERAGE
         ):
             dataset = {}
-            for acq_channel in acq_metadata.acq_indices:
+            for acq_channel_metadata in acq_metadata.acq_channels_metadata.values():
+                acq_channel: Hashable = acq_channel_metadata.acq_channel
                 channel_data = acquired_data[acq_channel]
                 if (num_dims := len(channel_data.dims)) != 2 or not np.iscomplexobj(
                     channel_data
@@ -393,7 +393,8 @@ class ScheduleGettable:
             and acq_metadata.bin_mode == BinMode.AVERAGE
         ):
             dataset = {}
-            for acq_channel in acq_metadata.acq_indices:
+            for acq_channel_metadata in acq_metadata.acq_channels_metadata.values():
+                acq_channel: Hashable = acq_channel_metadata.acq_channel
                 channel_data = acquired_data[acq_channel]
                 if (num_dims := len(channel_data.dims)) != 1 or not np.iscomplexobj(
                     channel_data
@@ -416,7 +417,8 @@ class ScheduleGettable:
             and acq_metadata.bin_mode == BinMode.APPEND
         ):
             dataset = {}
-            for acq_channel in acq_metadata.acq_indices:
+            for acq_channel_metadata in acq_metadata.acq_channels_metadata.values():
+                acq_channel: Hashable = acq_channel_metadata.acq_channel
                 channel_data = acquired_data[acq_channel]
                 if (num_dims := len(channel_data.dims)) != 2 or not np.iscomplexobj(
                     channel_data
@@ -567,8 +569,8 @@ class ScheduleGettable:
         self, execute_get: bool = False, update: bool = False
     ) -> str:
         """
-        Create a report that saves all information contained in this `ScheduleGettable`
-        and save it in the quantify datadir with its own `tuid`. The information in
+        Create a report that saves all information contained in this ``ScheduleGettable``
+        and save it in the quantify datadir with its own ``tuid``. The information in
         the report includes the generated schedule, device config, hardware config
         and snapshot of the instruments.
 
@@ -582,7 +584,7 @@ class ScheduleGettable:
         Returns
         -------
         :
-            The `tuid` of the generated report.
+            The ``tuid`` of the generated report.
         """
 
         if update is True:
@@ -653,7 +655,7 @@ def _evaluate_parameter_dict(parameters: dict[str, Any]) -> dict[str, Any]:
     Returns
     -------
     :
-        The `parameters` dictionary, but with the parameters replaced by their current
+        The ``parameters`` dictionary, but with the parameters replaced by their current
         value.
 
     Raises

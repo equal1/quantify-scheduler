@@ -1,11 +1,14 @@
 ---
-file_format: mystnb
+jupytext:
+  text_representation:
+    extension: .md
+    format_name: myst
+    format_version: 0.13
+    jupytext_version: 1.14.5
 kernelspec:
-    name: python3
-    display_name: python3
-
-mystnb:
-  execution_timeout: 120
+  display_name: Python 3 (ipykernel)
+  language: python
+  name: python3
 ---
 
 (sec-acquisitions)=
@@ -24,7 +27,7 @@ The complete source code of this tutorial can be found in
 In this tutorial we give examples of how to add acquisitions to schedules, and how to retrieve acquisition results using the {class}`~quantify_scheduler.instrument_coordinator.instrument_coordinator.InstrumentCoordinator`.
 More specifically, this tutorial only describes acquisitions with {class}`~quantify_scheduler.instrument_coordinator.instrument_coordinator.InstrumentCoordinator` with Qblox backend with transmon qubits (or Qblox backend with NV center in case of trigger count). See {ref}`sec-tutorial-schedulegettable` for a tutorial on how to perform acquisitions with {class}`~quantify_scheduler.gettables.ScheduleGettable`, and see {ref}`sec-backend-zhinst` for help on how to perform experiments with the Zurich Instruments backend.
 
-This tutorial assumes you are familiar with compiling schedules and running simple pulses on the Qblox hardware. We also assume, that you have basic familiarity with `xarray` (see [xarray introduction](https://quantify-os.org/docs/quantify-core/latest/dev/design/dataset/Xarray%20introduction.html) and the [official documentation](https://docs.xarray.dev/en/stable/user-guide/data-structures.html)).
+This tutorial assumes you are familiar with compiling schedules and running simple pulses on the Qblox hardware. We also assume, that you have basic familiarity with `xarray` (see [xarray introduction](https://quantify-os.org/docs/quantify-core/dev/dev/design/dataset/Xarray%20introduction.html) and the [official documentation](https://docs.xarray.dev/en/stable/user-guide/data-structures.html)).
 
 The basic structure of the returned acquisition data is that it is an {class}`xarray.Dataset`, which consists of multiple {class}`xarray.DataArray`. Each of these {class}`xarray.DataArray`s correspond to one acquisition channel.
 
@@ -1038,7 +1041,7 @@ cluster.delete_dummy_binned_acquisition_data(slot_idx=dummy_slot_idx, sequencer=
 dummy_data_0 = [
         DummyBinnedAcquisitionData(data=(16, 0), thres=0, avg_cnt=0),
 ]
-cluster.set_dummy_binned_acquisition_data(slot_idx=dummy_slot_idx, sequencer=0, acq_index_name="2", data=dummy_data_0)
+cluster.set_dummy_binned_acquisition_data(slot_idx=dummy_slot_idx, sequencer=0, acq_index_name="0", data=dummy_data_0)
 ```
 
 Let's compile the schedule.
@@ -1096,7 +1099,7 @@ cluster.delete_dummy_binned_acquisition_data(slot_idx=dummy_slot_idx, sequencer=
 dummy_data_0 = [
         DummyBinnedAcquisitionData(data=(32, 0), thres=0, avg_cnt=0),
 ]
-cluster.set_dummy_binned_acquisition_data(slot_idx=dummy_slot_idx, sequencer=0, acq_index_name="2", data=dummy_data_0)
+cluster.set_dummy_binned_acquisition_data(slot_idx=dummy_slot_idx, sequencer=0, acq_index_name="0", data=dummy_data_0)
 ```
 
 Let's compile the schedule.

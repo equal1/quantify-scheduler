@@ -6,10 +6,7 @@ from enum import Enum, unique
 
 
 class StrEnum(Enum):
-    """
-    This class functions to include explicit string serialization without adding `str`
-    as a base class.
-    """
+    """Enum that can be directly serialized to string."""
 
     def __str__(self):
         return self.value
@@ -17,17 +14,16 @@ class StrEnum(Enum):
 
 @unique
 class BinMode(StrEnum):
-
     """
     The acquisition protocol bin mode enum type.
 
     Used to set the bin type to
     append or average respectively.
 
-    BinMode `APPEND` uses a list where every new
+    BinMode ``APPEND`` uses a list where every new
     result will be appended to the list.
 
-    BinMode `AVERAGE` incrementally stores the weighted
+    BinMode ``AVERAGE`` incrementally stores the weighted
     average result.
     """
 

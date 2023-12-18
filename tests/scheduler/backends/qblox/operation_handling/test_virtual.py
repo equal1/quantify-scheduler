@@ -33,6 +33,7 @@ def fixture_empty_qasm_program():
         static_hw_properties=QcmModule.static_hw_properties,
         register_manager=RegisterManager(),
         align_fields=True,
+        acq_metadata=None,
     )
 
 
@@ -150,8 +151,8 @@ class TestAwgOffsetStrategy:
         # arrange
         op_info = {
             "wf_func": None,
-            "offset_path_0": 0.4,
-            "offset_path_1": 0,
+            "offset_path_I": 0.4,
+            "offset_path_Q": 0,
         }
         expected_qasm = [["", "set_awg_offs", "13107,0", ""]]
 
@@ -196,7 +197,7 @@ class TestUpdateParameterStrategy:
 class TestNcoSetClockFrequencyStrategy:
     def test_docstring(self):
         assert (
-            f"`upd_param` of {constants.NCO_SET_FREQ_WAIT} ns"
+            f"``upd_param`` of {constants.NCO_SET_FREQ_WAIT} ns"
             in virtual.NcoSetClockFrequencyStrategy.__doc__
         )
         assert (

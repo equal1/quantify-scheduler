@@ -4,35 +4,31 @@
 # pylint: disable= too-many-arguments, too-many-ancestors
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import numpy as np
 from numpy.typing import NDArray
 from qcodes import InstrumentChannel, validators
+
 from quantify_scheduler import Operation
 from quantify_scheduler.backends.qblox import constants as qblox_constants
+from quantify_scheduler.backends.qblox.enums import ChannelMode
 from quantify_scheduler.helpers.waveforms import area_pulses
 from quantify_scheduler.resources import BasebandClockResource
 
 
 @dataclass
 class ReferenceMagnitude:
-    """
-    Dataclass which describes an amplitude / power reference level, with respect to
-    which pulse amplitudes are defined. This can be specified in units of "V", "dBm"
-    or "A".
-    """
+    """Dataclass defining a reference level for pulse amplitudes in units of 'V', 'dBm', or 'A'."""
 
     value: float
     unit: Literal["V", "dBm", "A"]
 
     @classmethod
     def from_parameter(cls, parameter: InstrumentChannel):
-        """
-        Initialise this dataclass by taking the value and unit from an
-        ReferenceMagnitude QCoDeS InstrumentChannnel.
-        """
+        """Initialize from ReferenceMagnitude QCoDeS InstrumentChannel values."""
         value, unit = parameter.get_val_unit()
         if np.isnan(value):
             return None
@@ -47,8 +43,9 @@ class ReferenceMagnitude:
 
 class ShiftClockPhase(Operation):
     """
-    Operation that shifts the phase of a clock by a specified amount. This is
-    a low-level operation and therefore depends on the backend.
+    Operation that shifts the phase of a clock by a specified amount.
+
+    This is a low-level operation and therefore depends on the backend.
 
     Currently only implemented for Qblox backend, refer to
     :class:`~quantify_scheduler.backends.qblox.operation_handling.virtual.NcoPhaseShiftStrategy`
@@ -93,17 +90,16 @@ class ShiftClockPhase(Operation):
 
 
 class ResetClockPhase(Operation):
-    """An operation that resets the phase of a clock."""
+    """
+    An operation that resets the phase of a clock.
+
+    Parameters
+    ----------
+    clock
+        The clock of which to reset the phase.
+    """
 
     def __init__(self, clock: str, t0: float = 0):
-        """
-        Create a new instance of ResetClockPhase.
-
-        Parameters
-        ----------
-        clock
-            The clock of which to reset the phase.
-        """
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -124,12 +120,25 @@ class ResetClockPhase(Operation):
 
 class SetClockFrequency(Operation):
     """
-    Operation that sets updates the frequency of a clock. This is a low-level operation
-    and therefore depends on the backend.
+    Operation that sets updates the frequency of a clock.
+
+    This is a low-level operation and therefore depends on the backend.
 
     Currently only implemented for Qblox backend, refer to
     :class:`~quantify_scheduler.backends.qblox.operation_handling.virtual.NcoSetClockFrequencyStrategy`
     for more details.
+
+    Parameters
+    ----------
+    clock
+        The clock for which a new frequency is to be set.
+    clock_freq_new
+        The new frequency in Hz.
+    t0
+        Time in seconds when to execute the command relative to the start time of
+        the Operation in the Schedule.
+    duration
+            The duration of the operation in seconds.
     """
 
     def __init__(
@@ -139,20 +148,6 @@ class SetClockFrequency(Operation):
         t0: float = 0,
         duration: float = qblox_constants.NCO_SET_FREQ_WAIT * 1e-9,
     ):
-        """
-
-        Parameters
-        ----------
-        clock
-            The clock for which a new frequency is to be set.
-        clock_freq_new
-            The new frequency in Hz.
-        t0
-            Time in seconds when to execute the command relative to the start time of
-            the Operation in the Schedule.
-        duration
-            The duration of the operation in seconds.
-        """
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -174,82 +169,42 @@ class SetClockFrequency(Operation):
 
 
 class VoltageOffset(Operation):
-    """
-    Operation that represents setting a constant offset to the output voltage.
+    """Deprecated VoltageOffset."""
 
-    Currently only implemented for Qblox backend, refer to
-    :class:`~quantify_scheduler.backends.qblox.operation_handling.virtual.AwgOffsetStrategy`
-    for more details.
-    """
+    def __new__(cls, *args, **kwargs) -> VoltageOffset:
+        """Return StitchedPulse from the new location."""
+        warnings.warn(
+            (
+                "Class quantify_scheduler.backends.qblox.operations.pulse_library.VoltageOffset is "
+                "deprecated and will be removed in quantify-scheduler-0.20.0. Use "
+                "quantify_scheduler.backends.qblox.backends.qblox.operations.pulse_library.VoltageOffset "
+                "instead."
+            ),
+            FutureWarning,
+        )
+        # Avoid circular import
+        # pylint: disable=import-outside-toplevel
+        from quantify_scheduler.backends.qblox.operations import (
+            VoltageOffset as QbloxVoltageOffset,
+        )
 
-    def __init__(
-        self,
-        offset_path_0: float,
-        offset_path_1: float,
-        duration: float = 0.0,
-        port: Optional[str] = None,
-        clock: Optional[str] = None,
-        t0: float = 0,
-        reference_magnitude: ReferenceMagnitude | None = None,
-    ):
-        """
-        Parameters
-        ----------
-        offset_path_0 : float
-            Offset of path 0 (the I-path).
-        offset_path_1 : float
-            Offset of path 1 (the Q-path).
-        port : str or None, optional
-            Port of the stitched pulse.
-        clock : str or None, optional
-            Clock used to modulate the stitched pulse.
-        duration : float, optional
-            The time to hold the offset for (in seconds).
-        t0 : float, optional
-            Time in seconds when to start the pulses relative to the start time
-            of the Operation in the Schedule.
-        reference_magnitude : ReferenceMagnitude, optional
-            Scaling value and unit for the unitless amplitude. Uses settings in
-            hardware config if not provided.
-
-        """
-        super().__init__(name=self.__class__.__name__)
-        self.data["pulse_info"] = [
-            {
-                "wf_func": None,
-                "t0": t0,
-                "offset_path_0": offset_path_0,
-                "offset_path_1": offset_path_1,
-                "clock": clock,
-                "port": port,
-                "duration": duration,
-                "reference_magnitude": reference_magnitude,
-            }
-        ]
-        self._update()
-
-    def __str__(self) -> str:
-        pulse_info = self.data["pulse_info"][0]
-        return self._get_signature(pulse_info)
+        return QbloxVoltageOffset(*args, **kwargs)
 
 
 class IdlePulse(Operation):
     """
     The IdlePulse Operation is a placeholder for a specified duration of time.
+
+    The IdlePulse Operation is a placeholder for a specified duration
+    of time.
+
+    Parameters
+    ----------
+    duration
+        The duration of idle time in seconds.
     """
 
     def __init__(self, duration: float):
-        """
-        Create a new instance of IdlePulse.
-
-        The IdlePulse Operation is a placeholder for a specified duration
-        of time.
-
-        Parameters
-        ----------
-        duration
-            The duration of idle time in seconds.
-        """
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -268,9 +223,36 @@ class IdlePulse(Operation):
 
 
 class RampPulse(Operation):
-    """
-    The RampPulse Operation is a real-valued pulse that ramps from the specified offset
-    to the specified amplitude + offset during the duration of the pulse.
+    r"""
+    RampPulse Operation is a pulse that ramps from zero to a set amplitude over its duration.
+
+    The pulse is given as a function of time :math:`t` and the parameters offset and
+    amplitude by
+
+    .. math::
+
+        P(t) = \mathrm{offset} + t \times \mathrm{amp}.
+
+    Parameters
+    ----------
+    amp
+        Unitless amplitude of the ramp envelope function.
+    duration
+        The pulse duration in seconds.
+    offset
+        Starting point of the ramp pulse
+    port
+        Port of the pulse.
+    clock
+        Clock used to modulate the pulse, by default a
+        BasebandClock is used.
+    reference_magnitude
+        Scaling value and unit for the unitless amplitude. Uses settings in
+        hardware config if not provided.
+    t0
+        Time in seconds when to start the pulses relative
+        to the start time
+        of the Operation in the Schedule.
     """
 
     def __init__(
@@ -283,40 +265,6 @@ class RampPulse(Operation):
         offset: float = 0,
         t0: float = 0,
     ):
-        r"""
-        Create a new instance of RampPulse.
-
-        The RampPulse Operation is a real-valued pulse that ramps from zero
-        to the specified amplitude during the duration of the pulse.
-
-        The pulse is given as a function of time :math:`t` and the parameters offset and
-        amplitude by
-
-        .. math::
-
-            P(t) = \mathrm{offset} + t \times \mathrm{amp}.
-
-        Parameters
-        ----------
-        amp
-            Unitless amplitude of the ramp envelope function.
-        duration
-            The pulse duration in seconds.
-        offset
-            Starting point of the ramp pulse
-        port
-            Port of the pulse.
-        clock
-            Clock used to modulate the pulse, by default a
-            BasebandClock is used.
-        reference_magnitude
-            Scaling value and unit for the unitless amplitude. Uses settings in
-            hardware config if not provided.
-        t0
-            Time in seconds when to start the pulses relative
-            to the start time
-            of the Operation in the Schedule.
-        """
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -339,8 +287,30 @@ class RampPulse(Operation):
 
 class StaircasePulse(Operation):  # pylint: disable=too-many-ancestors
     """
-    A real valued staircase pulse, which reaches it's final amplitude in discrete
-    steps. In between it will maintain a plateau.
+    A real valued staircase pulse, which reaches it's final amplitude in discrete steps.
+
+    In between it will maintain a plateau.
+
+    Parameters
+    ----------
+    start_amp
+        Starting unitless amplitude of the staircase envelope function.
+    final_amp
+        Final unitless amplitude of the staircase envelope function.
+    num_steps
+        The number of plateaus.
+    duration
+        Duration of the pulse in seconds.
+    port
+        Port of the pulse.
+    clock
+        Clock used to modulate the pulse.
+    reference_magnitude
+        Scaling value and unit for the unitless amplitude. Uses settings in
+        hardware config if not provided.
+    t0
+        Time in seconds when to start the pulses relative to the start time
+        of the Operation in the Schedule.
     """
 
     def __init__(
@@ -354,30 +324,6 @@ class StaircasePulse(Operation):  # pylint: disable=too-many-ancestors
         reference_magnitude: Optional[ReferenceMagnitude] = None,
         t0: float = 0,
     ):
-        """
-        Constructor for a staircase.
-
-        Parameters
-        ----------
-        start_amp
-            Starting unitless amplitude of the staircase envelope function.
-        final_amp
-            Final unitless amplitude of the staircase envelope function.
-        num_steps
-            The number of plateaus.
-        duration
-            Duration of the pulse in seconds.
-        port
-            Port of the pulse.
-        clock
-            Clock used to modulate the pulse.
-        reference_magnitude
-            Scaling value and unit for the unitless amplitude. Uses settings in
-            hardware config if not provided.
-        t0
-            Time in seconds when to start the pulses relative to the start time
-            of the Operation in the Schedule.
-        """
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -400,27 +346,31 @@ class StaircasePulse(Operation):  # pylint: disable=too-many-ancestors
 
 
 class MarkerPulse(Operation):
+    """
+    Digital pulse that is HIGH for the specified duration.
+
+    Marker pulse is played on marker output. Currently only implemented for Qblox
+    backend.
+
+    Parameters
+    ----------
+    duration
+        Duration of the HIGH signal.
+    port
+        Name of associated port.
+    clock
+        As digital channels technically do not have a clock, this parameter is by default
+        set to "digital". In circuit to device compilation digital channels get assigned
+        the digital clock.
+    """
+
     def __init__(
         self,
         duration: float,
         port: str,
         t0: float = 0,
-        clock: str = "digital",
+        clock: str = ChannelMode.DIGITAL,
     ):
-        """Digital pulse that is HIGH for the specified duration.
-        Played on marker output.
-        Currently only implemented for Qblox backend.
-
-        Parameters
-        ----------
-        duration
-            Duration of the HIGH signal.
-        port
-            Name of associated port.
-        clock
-            As digital IO's technically do not have a clock, this parameter is by default set to "digital".
-            In circuit to device compilation digital IO's get assigned the digital clock.
-        """
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -442,51 +392,35 @@ class MarkerPulse(Operation):
 
 class SquarePulse(Operation):
     """
-    The SquarePulse Operation is a real-valued pulse with the specified
-    amplitude during the pulse.
+    A real-valued pulse with the specified amplitude during the pulse.
+
+    Parameters
+    ----------
+    amp
+        Unitless complex valued amplitude of the envelope.
+    duration
+        The pulse duration in seconds.
+    port
+        Port of the pulse, must be capable of playing a complex waveform.
+    clock
+        Clock used to modulate the pulse.
+    reference_magnitude
+        Scaling value and unit for the unitless amplitude. Uses settings in
+        hardware config if not provided.
+    t0
+        Time in seconds when to start the pulses relative to the start time
+        of the Operation in the Schedule.
     """
 
     def __init__(
         self,
-        amp: float,
+        amp: complex,
         duration: float,
         port: str,
         clock: str = BasebandClockResource.IDENTITY,
         reference_magnitude: Optional[ReferenceMagnitude] = None,
-        phase: float = 0,
         t0: float = 0,
     ):
-        """
-        Create a new instance of SquarePulse.
-
-        The SquarePulse Operation is a real-valued pulse with the specified
-        amplitude during the pulse.
-
-        Parameters
-        ----------
-        amp
-            Unitless amplitude of the envelope.
-        duration
-            The pulse duration in seconds.
-        port
-            Port of the pulse, must be capable of playing a complex waveform.
-        clock
-            Clock used to modulate the pulse.
-        reference_magnitude
-            Scaling value and unit for the unitless amplitude. Uses settings in
-            hardware config if not provided.
-        phase
-            Phase of the pulse in degrees.
-        t0
-            Time in seconds when to start the pulses relative to the start time
-            of the Operation in the Schedule.
-        """
-        if phase != 0:
-            # Because of how clock interfaces were changed.
-            # FIXME: need to be able to add phases to # pylint: disable=fixme
-            # the waveform separate from the clock.
-            raise NotImplementedError
-
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -494,7 +428,6 @@ class SquarePulse(Operation):
                 "amp": amp,
                 "reference_magnitude": reference_magnitude,
                 "duration": duration,
-                "phase": phase,
                 "t0": t0,
                 "clock": clock,
                 "port": port,
@@ -508,7 +441,39 @@ class SquarePulse(Operation):
 
 
 class SuddenNetZeroPulse(Operation):
-    """The sudden net-zero (SNZ) pulse from :cite:t:`negirneac_high_fidelity_2021`."""
+    """
+    A pulse that can be used to implement a conditional phase gate in transmon qubits.
+
+    The sudden net-zero (SNZ) pulse is defined in
+    :cite:t:`negirneac_high_fidelity_2021`.
+
+    Parameters
+    ----------
+    amp_A
+        Unitless amplitude of the main square pulse.
+    amp_B
+        Unitless scaling correction for the final sample of the first square and first
+        sample of the second square pulse.
+    net_zero_A_scale
+        Amplitude scaling correction factor of the negative arm of the net-zero
+        pulse.
+    t_pulse
+        The total duration of the two half square pulses
+    t_phi
+        The idling duration between the two half pulses
+    t_integral_correction
+        The duration in which any non-zero pulse amplitude needs to be corrected.
+    port
+        Port of the pulse, must be capable of playing a complex waveform.
+    clock
+        Clock used to modulate the pulse.
+    reference_magnitude
+        Scaling value and unit for the unitless amplitude. Uses settings in
+        hardware config if not provided.
+    t0
+        Time in seconds when to start the pulses relative to the start time
+        of the Operation in the Schedule.
+    """
 
     def __init__(
         self,
@@ -523,39 +488,6 @@ class SuddenNetZeroPulse(Operation):
         reference_magnitude: Optional[ReferenceMagnitude] = None,
         t0: float = 0,
     ):
-        """
-        The sudden net-zero (SNZ) pulse from :cite:t:`negirneac_high_fidelity_2021`.
-
-        The SuddenNetZeroPulse is a real-valued pulse that can be used to implement a
-        conditional phase gate in transmon qubits.
-
-        Parameters
-        ----------
-        amp_A
-            unitless amplitude of the main square pulse
-        amp_B
-            unitless scaling correction for the final sample of the first square and first sample
-            of the second square pulse.
-        net_zero_A_scale
-            amplitude scaling correction factor of the negative arm of the net-zero
-            pulse.
-        t_pulse
-            the total duration of the two half square pulses
-        t_phi
-            the idling duration between the two half pulses
-        t_integral_correction
-            the duration in which any non-zero pulse amplitude needs to be corrected.
-        port
-            Port of the pulse, must be capable of playing a complex waveform.
-        clock
-            Clock used to modulate the pulse.
-        reference_magnitude
-            Scaling value and unit for the unitless amplitude. Uses settings in
-            hardware config if not provided.
-        t0
-            Time in seconds when to start the pulses relative to the start time
-            of the Operation in the Schedule.
-        """
         duration = t_pulse + t_phi + t_integral_correction
 
         super().__init__(name=self.__class__.__name__)
@@ -590,8 +522,8 @@ def decompose_long_square_pulse(
     Generates a list of square pulses equivalent to a  (very) long square pulse.
 
     Intended to be used for waveform-memory-limited devices. Effectively, only two
-    square pulses, at most, will be needed: a main one of duration `duration_max` and
-    a second one for potential mismatch between N `duration_max` and overall `duration`.
+    square pulses, at most, will be needed: a main one of duration ``duration_max`` and
+    a second one for potential mismatch between N ``duration_max`` and overall `duration`.
 
     Parameters
     ----------
@@ -600,8 +532,8 @@ def decompose_long_square_pulse(
     duration_max
         Maximum duration of square pulses to be generated in seconds.
     single_duration
-        If `True`, only square pulses of duration `duration_max` will be generated.
-        If `False`, a square pulse of `duration` < `duration_max` might be generated if
+        If ``True``, only square pulses of duration ``duration_max`` will be generated.
+        If ``False``, a square pulse of ``duration`` < ``duration_max`` might be generated if
         necessary.
     **kwargs
         Other keyword arguments to be passed to the :class:`~SquarePulse`.
@@ -632,8 +564,24 @@ def decompose_long_square_pulse(
 
 class SoftSquarePulse(Operation):
     """
-    The SoftSquarePulse Operation is a real valued square pulse convolved with
-    a Hann window for smoothing.
+    A real valued square pulse convolved with a Hann window for smoothing.
+
+    Parameters
+    ----------
+    amp
+        Unitless amplitude of the envelope.
+    duration
+        The pulse duration in seconds.
+    port
+        Port of the pulse, must be capable of playing a complex waveform.
+    clock
+        Clock used to modulate the pulse.
+    reference_magnitude
+        Scaling value and unit for the unitless amplitude. Uses settings in
+        hardware config if not provided.
+    t0
+        Time in seconds when to start the pulses relative to the start time
+        of the Operation in the Schedule.
     """
 
     def __init__(
@@ -645,29 +593,6 @@ class SoftSquarePulse(Operation):
         reference_magnitude: Optional[ReferenceMagnitude] = None,
         t0: float = 0,
     ):
-        """
-        Create a new instance of SoftSquarePulse.
-
-        The SoftSquarePulse Operation is a real valued square pulse convolved with
-        a Hann window for smoothing.
-
-        Parameters
-        ----------
-        amp
-            Unitless amplitude of the envelope.
-        duration
-            The pulse duration in seconds.
-        port
-            Port of the pulse, must be capable of playing a complex waveform.
-        clock
-            Clock used to modulate the pulse.
-        reference_magnitude
-            Scaling value and unit for the unitless amplitude. Uses settings in
-            hardware config if not provided.
-        t0
-            Time in seconds when to start the pulses relative to the start time
-            of the Operation in the Schedule.
-        """
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -690,6 +615,27 @@ class SoftSquarePulse(Operation):
 class ChirpPulse(Operation):  # pylint: disable=too-many-ancestors
     """
     A linear chirp signal. A sinusoidal signal that ramps up in frequency.
+
+    Parameters
+    ----------
+    amp
+        Unitless amplitude of the envelope.
+    duration
+        Duration of the pulse.
+    port
+        The port of the pulse.
+    clock
+        Clock used to modulate the pulse.
+    start_freq
+        Start frequency of the Chirp. Note that this is the frequency at which the
+        waveform is calculated, this may differ from the clock frequency.
+    end_freq
+        End frequency of the Chirp.
+    reference_magnitude
+        Scaling value and unit for the unitless amplitude. Uses settings in
+        hardware config if not provided.
+    t0
+        Shift of the start time with respect to the start of the operation.
     """
 
     def __init__(
@@ -703,30 +649,6 @@ class ChirpPulse(Operation):  # pylint: disable=too-many-ancestors
         reference_magnitude: Optional[ReferenceMagnitude] = None,
         t0: float = 0,
     ):
-        """
-        Constructor for a chirp pulse.
-
-        Parameters
-        ----------
-        amp
-            Unitless amplitude of the envelope.
-        duration
-            Duration of the pulse.
-        port
-            The port of the pulse.
-        clock
-            Clock used to modulate the pulse.
-        start_freq
-            Start frequency of the Chirp. Note that this is the frequency at which the
-            waveform is calculated, this may differ from the clock frequency.
-        end_freq
-            End frequency of the Chirp.
-        reference_magnitude
-            Scaling value and unit for the unitless amplitude. Uses settings in
-            hardware config if not provided.
-        t0
-            Shift of the start time with respect to the start of the operation.
-        """
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -751,14 +673,35 @@ class ChirpPulse(Operation):  # pylint: disable=too-many-ancestors
 class DRAGPulse(Operation):
     # pylint: disable=line-too-long, too-many-ancestors
     r"""
-    DRAG pulse intended for single qubit gates in transmon based systems.
+    A Gaussian pulse with a derivative component added to the out-of-phase channel.
 
-    A DRAG pulse is a gaussian pulse with a derivative component added to the
-    out-of-phase channel to reduce unwanted excitations of the
+    The DRAG pulse is intended for single qubit gates in transmon based systems.
+    It can be calibrated to reduce unwanted excitations of the
     :math:`|1\rangle - |2\rangle` transition (:cite:t:`motzoi_simple_2009` and
     :cite:t:`gambetta_analytic_2011`).
 
     The waveform is generated using :func:`.waveforms.drag` .
+
+    Parameters
+    ----------
+    G_amp
+        Unitless amplitude of the Gaussian envelope.
+    D_amp
+        Unitless amplitude of the derivative component, the DRAG-pulse parameter.
+    duration
+        The pulse duration in seconds.
+    phase
+        Phase of the pulse in degrees.
+    clock
+        Clock used to modulate the pulse.
+    port
+        Port of the pulse, must be capable of carrying a complex waveform.
+    reference_magnitude
+        Scaling value and unit for the unitless amplitude. Uses settings in
+        hardware config if not provided.
+    t0
+        Time in seconds when to start the pulses relative to the start time
+        of the Operation in the Schedule.
     """
 
     def __init__(
@@ -772,30 +715,6 @@ class DRAGPulse(Operation):
         reference_magnitude: Optional[ReferenceMagnitude] = None,
         t0: float = 0,
     ):
-        """
-        Create a new instance of DRAGPulse.
-
-        Parameters
-        ----------
-        G_amp
-            Unitless amplitude of the Gaussian envelope.
-        D_amp
-            Unitless amplitude of the derivative component, the DRAG-pulse parameter.
-        duration
-            The pulse duration in seconds.
-        phase
-            Phase of the pulse in degrees.
-        clock
-            Clock used to modulate the pulse.
-        port
-            Port of the pulse, must be capable of carrying a complex waveform.
-        reference_magnitude
-            Scaling value and unit for the unitless amplitude. Uses settings in
-            hardware config if not provided.
-        t0
-            Time in seconds when to start the pulses relative to the start time
-            of the Operation in the Schedule.
-        """
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -903,7 +822,7 @@ def create_dc_compensation_pulse(
         Resolution to calculate the enclosure of the
         pulses to calculate the area to compensate.
     amp
-        Desired unitless amplitude of the DCCompensationPulse.
+        Desired unitless amplitude of the DC compensation SquarePulse.
         Leave to None to calculate the value for compensation,
         in this case you must assign a value to duration.
         The sign of the amplitude is ignored and adjusted
@@ -930,7 +849,6 @@ def create_dc_compensation_pulse(
 
     Returns
     -------
-
     :
         Returns a SquarePulse object that compensates all pulses passed as argument.
     """
@@ -980,7 +898,7 @@ def create_dc_compensation_pulse(
         c_duration = abs(area / c_amp)
     else:
         raise ValueError(
-            "The `DCCompensationPulse` allows either amp or duration to "
+            "The DC compensation SquarePulse allows either amp or duration to "
             + "be specified, not both. Both amp and duration were passed."
         )
 
@@ -989,7 +907,6 @@ def create_dc_compensation_pulse(
         duration=c_duration,
         port=port,
         clock=BasebandClockResource.IDENTITY,
-        phase=0,
         t0=t0,
     )
 
@@ -998,7 +915,7 @@ class WindowOperation(Operation):
     """
     The WindowOperation is an operation for visualization purposes.
 
-    The `WindowOperation` has a starting time and duration.
+    The :class:`~WindowOperation` has a starting time and duration.
     """
 
     def __init__(
@@ -1007,10 +924,6 @@ class WindowOperation(Operation):
         duration: float,
         t0: float = 0.0,
     ):
-        """
-        Create a new instance of WindowOperation.
-
-        """
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -1025,7 +938,7 @@ class WindowOperation(Operation):
 
     @property
     def window_name(self) -> str:
-        """Return the window name of this operation"""
+        """Return the window name of this operation."""
         return self.data["pulse_info"][0]["window_name"]
 
     def __str__(self) -> str:
@@ -1035,11 +948,33 @@ class WindowOperation(Operation):
 
 class NumericalPulse(Operation):
     """
-    Defines a pulse where the shape is determined by specifying an array of (complex)
-    points. If points are required between the specified samples (such as could be
+    A pulse where the shape is determined by specifying an array of (complex) points.
+
+    If points are required between the specified samples (such as could be
     required by the sampling rate of the hardware), meaning :math:`t[n] < t' < t[n+1]`,
     `scipy.interpolate.interp1d` will be used to interpolate between the two points and
     determine the value.
+
+    Parameters
+    ----------
+    samples
+        An array of (possibly complex) values specifying the shape of the pulse.
+    t_samples
+        An array of values specifying the corresponding times at which the
+        ``samples`` are evaluated.
+    port
+        The port that the pulse should be played on.
+    clock
+        Clock used to (de)modulate the pulse.
+    reference_magnitude
+        Scaling value and unit for the unitless samples. Uses settings in
+        hardware config if not provided.
+    t0
+        Time in seconds when to start the pulses relative to the start time
+        of the Operation in the Schedule.
+    interpolation
+        Specifies the type of interpolation used. This is passed as the "kind"
+        argument to `scipy.interpolate.interp1d`.
     """
 
     def __init__(
@@ -1052,31 +987,6 @@ class NumericalPulse(Operation):
         t0: float = 0,
         interpolation: str = "linear",
     ):
-        """
-        Creates an instance of the `NumericalPulse`.
-
-        Parameters
-        ----------
-        samples
-            An array of (possibly complex) values specifying the shape of the pulse.
-        t_samples
-            An array of values specifying the corresponding times at which the
-            `samples` are evaluated.
-        port
-            The port that the pulse should be played on.
-        clock
-            Clock used to (de)modulate the pulse.
-        reference_magnitude
-            Scaling value and unit for the unitless samples. Uses settings in
-            hardware config if not provided.
-        t0
-            Time in seconds when to start the pulses relative to the start time
-            of the Operation in the Schedule.
-        interpolation
-            Specifies the type of interpolation used. This is passed as the "kind"
-            argument to `scipy.interpolate.interp1d`.
-        """
-
         def make_list_from_array(
             val: Union[NDArray[float], List[float]]
         ) -> List[float]:
@@ -1117,6 +1027,27 @@ class SkewedHermitePulse(Operation):
     Hermite pulse intended for single qubit gates in diamond based systems.
 
     The waveform is generated using :func:`~quantify_scheduler.waveforms.skewed_hermite`.
+
+    Parameters
+    ----------
+    duration
+        The pulse duration in seconds.
+    amplitude
+        Unitless amplitude of the hermite pulse.
+    skewness
+        Skewness in the frequency space.
+    phase
+        Phase of the pulse in degrees.
+    clock
+        Clock used to modulate the pulse.
+    port
+        Port of the pulse, must be capable of carrying a complex waveform.
+    reference_magnitude
+        Scaling value and unit for the unitless amplitude. Uses settings in
+        hardware config if not provided.
+    t0
+        Time in seconds when to start the pulses relative to the start time
+        of the Operation in the Schedule. By default 0.
     """
 
     def __init__(
@@ -1130,30 +1061,6 @@ class SkewedHermitePulse(Operation):
         reference_magnitude: Optional[ReferenceMagnitude] = None,
         t0: float = 0,
     ):
-        """
-        Create a new instance of SkewedHermitePulse.
-
-        Parameters
-        ----------
-        duration
-            The pulse duration in seconds.
-        amplitude
-            Unitless amplitude of the hermite pulse.
-        skewness
-            Skewness in the frequency space.
-        phase
-            Phase of the pulse in degrees.
-        clock
-            Clock used to modulate the pulse.
-        port
-            Port of the pulse, must be capable of carrying a complex waveform.
-        reference_magnitude
-            Scaling value and unit for the unitless amplitude. Uses settings in
-            hardware config if not provided.
-        t0
-            Time in seconds when to start the pulses relative to the start time
-            of the Operation in the Schedule. By default 0.
-        """
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {

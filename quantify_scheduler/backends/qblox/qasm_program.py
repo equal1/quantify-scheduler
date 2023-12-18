@@ -5,19 +5,16 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import List, Optional, Union, Iterator
+from typing import Iterator, List, Optional, Union
 
 import numpy as np
 from columnar import columnar
 from columnar.exceptions import TableOverflowError
 
-from quantify_scheduler.backends.qblox import (
-    constants,
-    helpers,
-    q1asm_instructions,
-)
+from quantify_scheduler.backends.qblox import constants, helpers, q1asm_instructions
 from quantify_scheduler.backends.qblox.register_manager import RegisterManager
 from quantify_scheduler.backends.types.qblox import OpInfo, StaticHardwareProperties
+from quantify_scheduler.schedules.schedule import AcquisitionMetadata
 
 
 class QASMProgram:
@@ -26,6 +23,16 @@ class QASMProgram:
 
     Apart from this the class holds some convenience functions that auto generate
     certain instructions with parameters, as well as update the elapsed time.
+
+    Parameters
+    ----------
+    static_hw_properties
+        Dataclass holding the properties of the hardware that this program is to be
+        played on.
+    register_manager
+        The register manager that keeps track of the occupied/available registers.
+    align_fields
+        If True, make QASM program more human-readable by aligning its fields.
     """
 
     def __init__(
@@ -33,20 +40,8 @@ class QASMProgram:
         static_hw_properties: StaticHardwareProperties,
         register_manager: RegisterManager,
         align_fields: bool,
+        acq_metadata: Optional[AcquisitionMetadata],
     ):
-        """
-        Instantiates the QASMProgram.
-
-        Parameters
-        ----------
-        static_hw_properties
-            Dataclass holding the properties of the hardware that this program is to be
-            played on.
-        register_manager
-            The register manager that keeps track of the occupied/available registers.
-        align_fields
-            If True, make QASM program more human-readable by aligning its fields.
-        """
         self.register_manager: RegisterManager = register_manager
         """The register manager that keeps track of the occupied/available registers."""
         self.static_hw_properties: StaticHardwareProperties = static_hw_properties
@@ -58,7 +53,7 @@ class QASMProgram:
         self.integration_length_acq: Optional[int] = None
         """Integration length to use for the square acquisition."""
         self.time_last_acquisition_triggered: Optional[int] = None
-        """Time on which the last acquisition was triggered. Is `None` if no previous
+        """Time on which the last acquisition was triggered. Is ``None`` if no previous
         acquisition was triggered."""
         self.instructions: List[list] = list()
         """A list containing the instructions added to the program. The instructions
@@ -67,6 +62,23 @@ class QASMProgram:
         """If true, all labels, instructions, arguments and comments
         in the string representation of the program are printed on the same indention level.
         This worsens performance."""
+        self.acq_metadata: Optional[AcquisitionMetadata] = acq_metadata
+        """Acquisition metadata."""
+
+    def _find_qblox_acq_index(self, acq_channel: Hashable) -> int:
+        """
+        Finds the Qblox acq_index corresponding to acq_channel
+        in the acq_metadata.
+        """
+        # This function is a temporary solution.
+        # Proper solution: SE-298.
+        for (
+            qblox_acq_index,
+            acq_channel_metadata,
+        ) in self.acq_metadata.acq_channels_metadata.items():
+            if acq_channel_metadata.acq_channel == acq_channel:
+                return qblox_acq_index
+        raise ValueError(f"Qblox acquisition index not found for {acq_channel=}.")
 
     @staticmethod
     def get_instruction_as_list(
@@ -110,7 +122,7 @@ class QASMProgram:
 
     def emit(self, *args, **kwargs) -> None:
         """
-        Wrapper around the `get_instruction_as_list` which adds it to this program.
+        Wrapper around the ``get_instruction_as_list`` which adds it to this program.
 
         Parameters
         ----------
@@ -119,6 +131,17 @@ class QASMProgram:
         **kwargs
             All keyword arguments to pass to `get_instruction_as_list`.
         """
+        # Translating the acquisition channel to qblox acquisition index is intended as a temporary solution.
+        # Proper solution: SE-298.
+        instruction = args[0]
+        if self.acq_metadata and (
+            instruction == q1asm_instructions.ACQUIRE
+            or instruction == q1asm_instructions.ACQUIRE_TTL
+            or instruction == q1asm_instructions.ACQUIRE_WEIGHED
+        ):
+            args = list(args)
+            args[1] = self._find_qblox_acq_index(acq_channel=args[1])
+
         self.instructions.append(self.get_instruction_as_list(*args, **kwargs))
 
     # --- QOL functions -----
@@ -173,7 +196,7 @@ class QASMProgram:
         Raises
         ------
         ValueError
-            If `wait_time` <= 0.
+            If ``wait_time <= 0``.
         """
         if wait_time == 0:
             return
@@ -331,8 +354,8 @@ class QASMProgram:
 
     def set_gain_from_amplitude(
         self,
-        amplitude_path0: float,
-        amplitude_path1: float,
+        amplitude_path_I: float,
+        amplitude_path_Q: float,
         operation: Optional[OpInfo],
     ) -> None:
         """
@@ -340,22 +363,21 @@ class QASMProgram:
 
         Parameters
         ----------
-        amplitude_path0
-            Voltage to set on path0.
-        amplitude_path1
-            Voltage to set on path1.
+        amplitude_path_I
+            Voltage to set on path_I.
+        amplitude_path_Q
+            Voltage to set on path_Q.
         operation
             The operation for which this is done. Used for the exception messages.
         """
-
-        awg_gain_path0_immediate = self.expand_from_normalised_range(
-            amplitude_path0,
+        awg_gain_path_I_immediate = self.expand_awg_from_normalised_range(
+            amplitude_path_I,
             constants.IMMEDIATE_SZ_GAIN,
             "awg_gain_0",
             operation,
         )
-        awg_gain_path1_immediate = self.expand_from_normalised_range(
-            amplitude_path1,
+        awg_gain_path_Q_immediate = self.expand_awg_from_normalised_range(
+            amplitude_path_Q,
             constants.IMMEDIATE_SZ_GAIN,
             "awg_gain_1",
             operation,
@@ -363,20 +385,20 @@ class QASMProgram:
         comment = f"setting gain for {operation.name}" if operation else ""
         self.emit(
             q1asm_instructions.SET_AWG_GAIN,
-            awg_gain_path0_immediate,
-            awg_gain_path1_immediate,
+            awg_gain_path_I_immediate,
+            awg_gain_path_Q_immediate,
             comment=comment,
         )
 
     @staticmethod
-    def expand_from_normalised_range(
+    def expand_awg_from_normalised_range(
         val: float,
         immediate_size: int,
         param: Optional[str] = None,
         operation: Optional[OpInfo] = None,
     ):
         """
-        Takes the value of a parameter in normalized form (abs(param) <= 1.0), and
+        Takes the value of an awg gain or offset parameter in normalized form (abs(param) <= 1.0), and
         expands it to an integer in the appropriate range required by the sequencer.
 
         Parameters
@@ -407,7 +429,8 @@ class QASMProgram:
                 f"{param} is set to {val}. Parameter must be in the range "
                 f"-1.0 <= {param} <= 1.0 for {repr(operation)}."
             )
-        return int(val * immediate_size // 2)
+        max_gain = immediate_size // 2
+        return max(-max_gain, min(round(val * max_gain), max_gain - 1))
 
     def __str__(self) -> str:
         """
@@ -461,30 +484,23 @@ class QASMProgram:
 
         Examples
         --------
-
         This adds a loop to the program that loops 10 times over a wait of 100 ns.
 
         .. jupyter-execute::
 
             from quantify_scheduler.backends.qblox.qasm_program import QASMProgram
+            from quantify_scheduler.backends.qblox.instrument_compilers import QcmModule
             from quantify_scheduler.backends.qblox import register_manager, constants
             from quantify_scheduler.backends.types.qblox import (
                 StaticHardwareProperties,
                 BoundedParameter
             )
 
-            static_hw_properties: StaticHardwareProperties = StaticHardwareProperties(
-                instrument_type="QCM",
-                max_sequencers=constants.NUMBER_OF_SEQUENCERS_QCM,
-                max_awg_output_voltage=2.5,
-                mixer_dc_offset_range=BoundedParameter(min_val=-2.5, max_val=2.5, units="V"),
-                valid_ios=[f"complex_output_{i}" for i in [0, 1]]
-                + [f"real_output_{i}" for i in range(4)],
-            )
             qasm = QASMProgram(
-                static_hw_properties=static_hw_properties,
+                static_hw_properties=QcmModule.static_hw_properties,
                 register_manager=register_manager.RegisterManager(),
                 align_fields=True,
+                acq_metadata=None,
             )
 
             with qasm.loop(label="repeat", repetitions=10):

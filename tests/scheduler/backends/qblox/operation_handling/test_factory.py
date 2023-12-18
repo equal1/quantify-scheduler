@@ -10,10 +10,8 @@
 from typing import Type
 
 import pytest
-from quantify_scheduler.backends.qblox import q1asm_instructions
 
-from quantify_scheduler.enums import BinMode
-from quantify_scheduler.backends.types.qblox import OpInfo
+from quantify_scheduler.backends.qblox import q1asm_instructions
 from quantify_scheduler.backends.qblox.operation_handling import (
     acquisitions,
     base,
@@ -21,6 +19,8 @@ from quantify_scheduler.backends.qblox.operation_handling import (
     pulses,
     virtual,
 )
+from quantify_scheduler.backends.types.qblox import OpInfo
+from quantify_scheduler.enums import BinMode
 
 TEST_OP_INFO_MAPPING = {
     "other": OpInfo(
@@ -102,8 +102,8 @@ TEST_OP_INFO_MAPPING = {
         name="",
         data={
             "wf_func": None,
-            "offset_path_0": 0.5,
-            "offset_path_1": 0.5,
+            "offset_path_I": 0.5,
+            "offset_path_Q": 0.5,
             "port": "some_port",
             "clock": "some_clock",
         },
@@ -122,7 +122,7 @@ TEST_OP_INFO_MAPPING = {
 
 
 @pytest.mark.parametrize(
-    "op_info, answer",
+    "operation_info, answer",
     [
         (TEST_OP_INFO_MAPPING["other"], pulses.GenericPulseStrategy),
         (TEST_OP_INFO_MAPPING["square"], pulses.GenericPulseStrategy),
@@ -139,14 +139,13 @@ TEST_OP_INFO_MAPPING = {
     ],
 )
 def test_get_operation_strategy(
-    op_info: OpInfo,
+    operation_info: OpInfo,
     answer: Type[base.IOperationStrategy],
 ):
-    # arrange
-    io_mode = "complex"
-
-    # act
-    obj = factory.get_operation_strategy(op_info, io_mode)
+    obj = factory.get_operation_strategy(
+        operation_info=operation_info,
+        channel_name="complex_output_0",
+    )
 
     # assert
     assert isinstance(obj, answer)
@@ -154,8 +153,7 @@ def test_get_operation_strategy(
 
 def test_invalid_protocol_exception():
     # arrange
-    io_mode = "complex"
-    op_info = OpInfo(
+    operation_info = OpInfo(
         name="",
         data={
             "duration": 12e-9,
@@ -171,7 +169,10 @@ def test_invalid_protocol_exception():
 
     # act
     with pytest.raises(ValueError) as exc:
-        factory.get_operation_strategy(op_info, io_mode)
+        factory.get_operation_strategy(
+            operation_info=operation_info,
+            channel_name="complex_output_0",
+        )
 
     # assert
     assert (
@@ -186,8 +187,7 @@ def test_invalid_protocol_exception():
 
 def test_trace_append_exception():
     # arrange
-    io_mode = "complex"
-    op_info = OpInfo(
+    operation_info = OpInfo(
         name="",
         data={
             "duration": 12e-9,
@@ -203,7 +203,10 @@ def test_trace_append_exception():
 
     # act
     with pytest.raises(ValueError) as exc:
-        factory.get_operation_strategy(op_info, io_mode)
+        factory.get_operation_strategy(
+            operation_info=operation_info,
+            channel_name="complex_output_0",
+        )
 
     # assert
     assert (

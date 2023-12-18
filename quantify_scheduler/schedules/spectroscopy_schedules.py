@@ -1,8 +1,6 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
-"""
-Module containing schedules for common spectroscopy experiments.
-"""
+"""Module containing schedules for common spectroscopy experiments."""
 from __future__ import annotations
 
 from typing import Optional
@@ -112,8 +110,9 @@ def heterodyne_spec_sched_nco(
     port_out: Optional[str] = None,
 ) -> Schedule:
     """
-    Generate a batched schedule for performing fast heterodyne spectroscopy using the
-    `SetClockFrequency` operation for doing an NCO sweep.
+    Generate a batched schedule for performing fast heterodyne spectroscopy
+    using the :class:`~quantify_scheduler.operations.pulse_library.SetClockFrequency`
+    operation for doing an NCO sweep.
 
     .. admonition:: Example use of the ``heterodyne_spec_sched_nco`` schedule
         :class: tip
@@ -357,8 +356,9 @@ def two_tone_spec_sched_nco(
     repetitions: int = 1,
 ) -> Schedule:
     """
-    Generate a batched schedule for performing fast two-tone spectroscopy using the
-    `SetClockFrequency` operation for doing an NCO sweep.
+    Generate a batched schedule for performing fast two-tone spectroscopy using
+    the :class:`~quantify_scheduler.operations.pulse_library.SetClockFrequency`
+    operation for doing an NCO sweep.
 
     For long-lived qubits, it is advisable to use a small number of repetitions and
     compensate by doing continuous spectroscopy (low amplitude, long duration pulse with
@@ -520,7 +520,8 @@ def nv_dark_esr_sched(
     qubit: str,
     repetitions: int = 1,
 ) -> Schedule:
-    """Generates a schedule for a dark ESR experiment on an NV-center.
+    """
+    Generates a schedule for a dark ESR experiment on an NV-center.
 
     The spectroscopy frequency is taken from the device element. Please use the clock
     specified in the `spectroscopy_operation` entry of the device config.
@@ -556,7 +557,8 @@ def nv_dark_esr_sched_nco(
     spec_frequencies: np.ndarray,
     repetitions: int = 1,
 ) -> Schedule:
-    """Generates a schedule for a dark ESR experiment on an NV-center, in which
+    """
+    Generates a schedule for a dark ESR experiment on an NV-center, in which
     the NCO frequency is swept.
 
     .. note::

@@ -23,13 +23,13 @@ from matplotlib.axes import Axes
 from pydantic import field_serializer, field_validator
 
 from quantify_scheduler.backends.types.common import HardwareCompilationConfig
+from quantify_scheduler.helpers.importers import export_python_object_to_path_string
 from quantify_scheduler.operations.operation import Operation
 from quantify_scheduler.schedules.schedule import CompiledSchedule, Schedule
 from quantify_scheduler.structure.model import (
     DataStructure,
     deserialize_class,
     deserialize_function,
-    export_python_object_to_path_string,
 )
 
 if TYPE_CHECKING:
@@ -91,7 +91,7 @@ class OperationCompilationConfig(DataStructure):
     gate_info_factory_kwargs: Optional[List[str]] = None
     """
     A list of keyword arguments of the factory function for which the value must
-    be retrieved from the `gate_info` of the operation.
+    be retrieved from the ``gate_info`` of the operation.
     """
 
     @field_serializer("factory_func")
@@ -154,12 +154,6 @@ class DeviceCompilationConfig(DataStructure):
             device_cfg
     """
 
-    backend: Callable[[Schedule, Any], Schedule]
-    """
-    A . separated string specifying the location of the compilation backend this
-    configuration is intended for e.g.,
-    :code:`"quantify_scheduler.backends.circuit_to_device._compile_circuit_to_device"`.
-    """
     clocks: Dict[str, float]
     """
     A dictionary specifying the clock frequencies available on the device e.g.,
@@ -181,18 +175,11 @@ class DeviceCompilationConfig(DataStructure):
     The scheduling strategy used when determining the absolute timing of each
     operation of the schedule.
     """
-
-    @field_serializer("backend")
-    def _serialize_backend_func(self, v):
-        return export_python_object_to_path_string(v)
-
-    @field_validator("backend", mode="before")
-    def _import_backend_if_str(
-        cls, fun: Callable[[Schedule, Any], Schedule]  # noqa: N805
-    ) -> Callable[[Schedule, Any], Schedule]:
-        if isinstance(fun, str):
-            return deserialize_function(fun)
-        return fun  # type: ignore
+    compilation_passes: List[SimpleNodeConfig] = []
+    """
+    The list of compilation nodes that should be called in succession to compile a
+    schedule to the quantum-device layer.
+    """
 
 
 # pylint: disable=too-few-public-methods
@@ -207,26 +194,26 @@ class CompilationConfig(DataStructure):
     name: str
     """The name of the compiler."""
     version: str = "v0.6"
-    """The version of the `CompilationConfig` to facilitate backwards compatibility."""
+    """The version of the ``CompilationConfig`` to facilitate backwards compatibility."""
     keep_original_schedule: bool = True
     """
-    If `True`, the compiler will not modify the schedule argument.
-    If `False`, the compilation modifies the schedule, thereby
+    If ``True``, the compiler will not modify the schedule argument.
+    If ``False``, the compilation modifies the schedule, thereby
     making the original schedule unusable for further usage; this
-    improves compilation time. Warning: if `False`, the returned schedule
+    improves compilation time. Warning: if ``False``, the returned schedule
     references objects from the original schedule, please refrain from modifying
     the original schedule after compilation in this case!
     """
     backend: Type[QuantifyCompiler]
-    """A reference string to the `QuantifyCompiler` class used in the compilation."""
+    """A reference string to the :class:`~QuantifyCompiler` class used in the compilation."""
     device_compilation_config: Optional[Union[DeviceCompilationConfig, Dict]] = None
     """
-    The `DeviceCompilationConfig` used in the compilation from the quantum-circuit
+    The :class:`~DeviceCompilationConfig` used in the compilation from the quantum-circuit
     layer to the quantum-device layer.
     """
     hardware_compilation_config: Optional[HardwareCompilationConfig] = None
     """
-    The `HardwareCompilationConfig` used in the compilation from the quantum-device
+    The ``HardwareCompilationConfig`` used in the compilation from the quantum-device
     layer to the control-hardware layer.
     """
     debug_mode: bool = False
@@ -249,23 +236,22 @@ class CompilationConfig(DataStructure):
 
 
 class CompilationNode:
-    """A node representing a compiler pass."""
+    """
+    A node representing a compiler pass.
+
+    .. note::
+
+        To compile, the :meth:`~.CompilationNode.compile` method should be used.
+
+    Parameters
+    ----------
+    name
+        The name of the node. Should be unique if it is added to a (larger)
+        compilation
+        graph.
+    """
 
     def __init__(self, name: str):
-        """
-        Initialize a node representing a compiler pass.
-
-        .. note::
-
-            To compile, the :meth:`~.CompilationNode.compile` method should be used.
-
-        Parameters
-        ----------
-        name
-            The name of the node. Should be unique if it is added to a (larger)
-            compilation
-            graph.
-        """
         self.name = name
 
     # used as the key in a networkx graph so we like this to be a simple string.
@@ -314,27 +300,26 @@ class CompilationNode:
 
 # pylint: disable=too-few-public-methods
 class SimpleNode(CompilationNode):
-    """A node representing a single compilation pass."""
+    """
+    A node representing a single compilation pass.
+
+    .. note::
+
+        To compile, the :meth:`~.CompilationNode.compile` method should be used.
+
+    Parameters
+    ----------
+    name
+        The name of the node. Should be unique if it is added to a (larger)
+        compilation graph.
+    compilation_func
+        A Callable that will be wrapped in this object. A compilation function
+        should take the intermediate representation (commonly :class:`~.Schedule`)
+        and a config as inputs and returns a new (modified) intermediate
+        representation.
+    """
 
     def __init__(self, name: str, compilation_func: Callable):
-        """
-        Initialize a node representing a single compilation pass.
-
-        .. note::
-
-            To compile, the :meth:`~.CompilationNode.compile` method should be used.
-
-        Parameters
-        ----------
-        name
-            The name of the node. Should be unique if it is added to a (larger)
-            compilation graph.
-        compilation_func
-            A Callable that will be wrapped in this object. A compilation function
-            should take the intermediate representation (commonly :class:`~.Schedule`)
-            and a config as inputs and returns a new (modified) intermediate
-            representation.
-        """
         super().__init__(name=name)
         self.compilation_func = compilation_func
 
@@ -359,20 +344,17 @@ class QuantifyCompiler(CompilationNode):
     The compiler defines a directed acyclic graph containing
     :class:`~.CompilationNode` s. In this graph, nodes represent
     modular compilation passes.
+
+    Parameters
+    ----------
+    name
+        name of the compiler instance
+    quantum_device
+        quantum_device from which a :class:`~.CompilationConfig` will be generated
+        if None is provided for the compile step
     """
 
     def __init__(self, name, quantum_device: Optional[QuantumDevice] = None) -> None:
-        """
-        Initialize a QuantifyCompiler for quantify :class:`~.Schedule` s.
-
-        Parameters
-        ----------
-        name
-            name of the compiler instance
-        quantum_device
-            quantum_device from which a :class:`~.CompilationConfig` will be generated
-            if None is provided for the compile step
-        """
         super().__init__(name=name)
 
         # current implementations use networkx directed graph to store the task graph
@@ -422,6 +404,8 @@ class QuantifyCompiler(CompilationNode):
             config = self.quantum_device.generate_compilation_config()
         if config.keep_original_schedule:
             schedule = deepcopy(schedule)
+        # Reset schedule compiled instructions
+        schedule["compiled_instructions"] = {}
         return self._compilation_func(schedule=schedule, config=config)
 
     @property
@@ -519,7 +503,17 @@ class SerialCompiler(QuantifyCompiler):
         # like caching and visualization of compilation errors.
         self._task_graph.clear()
 
-        for i, compilation_pass in enumerate(config.compilation_passes):
+        compilation_passes = []
+        if config.device_compilation_config is not None:
+            compilation_passes.extend(
+                config.device_compilation_config.compilation_passes
+            )
+        if config.hardware_compilation_config is not None:
+            compilation_passes.extend(
+                config.hardware_compilation_config.compilation_passes
+            )
+
+        for i, compilation_pass in enumerate(compilation_passes):
             node = SimpleNode(
                 name=compilation_pass.name,
                 compilation_func=compilation_pass.compilation_func,
@@ -587,7 +581,6 @@ class SerialCompilationConfig(CompilationConfig):
     """
 
     backend: Type[SerialCompiler] = SerialCompiler
-    compilation_passes: List[SimpleNodeConfig]
 
     @field_serializer("backend")
     def _serialize_backend_func(self, v):

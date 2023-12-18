@@ -11,7 +11,7 @@ kernelspec:
 ```{admonition} Under construction
 The {class}`~.backends.types.common.HardwareCompilationConfig` replaces the the old-style unvalidated json/dict hardware configuration, adding validation of the contents
 and restructuring into `"hardware_description"`, `"hardware_options"` and `"connectivity"`. It is still under construction,
-once finished the old-style hardware config will be deprecated but still supported until further notice. 
+once finished the old-style hardware config will be deprecated but still supported until further notice.
 ```
 
 ```{code-cell} ipython3
@@ -37,7 +37,7 @@ temp_dir = TemporaryDirectory()
 set_datadir(temp_dir.name)
 ```
 
-In this section we introduce how to configure [Qblox Clusters](https://www.qblox.com/cluster) and the options available for them via Quantify.
+In this section we introduce how to configure [Qblox Clusters](https://www.qblox.com/products#cluster) and the options available for them via Quantify.
 For information about their lower-level functionality, you can consult the [Qblox Instruments documentation](https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/).
 For information on the process of compilation to hardware, see {ref}`sec-tutorial-compiling`.
 
@@ -53,7 +53,7 @@ mystnb:
   remove_code_outputs: true
 ---
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {
         "cluster0": {
             "instrument_type": "Cluster",
@@ -71,6 +71,9 @@ hardware_compilation_cfg = {
             "instrument_type": "LocalOscillator",
             "power": 20
         },
+        "iq_mixer_lo0": {
+            "instrument_type": "IQMixer"
+        }
     },
     "hardware_options": {
         "modulation_frequencies": {
@@ -89,29 +92,12 @@ hardware_compilation_cfg = {
         },
     },
     "connectivity": {
-        "cluster0": {
-            "cluster0_module1": {
-                "complex_output_0": {
-                    "lo_name": "lo0",
-                    "portclock_configs": [
-                        {
-                            "clock": "q4.01",
-                            "port": "q4:mw",
-                        },
-                    ]
-                },
-            },
-            "cluster0_module2": {
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "clock": "q5.01",
-                            "port": "q5:mw"
-                        }
-                    ]
-                },
-            },
-        },
+        "graph": [
+            ("cluster0.module1.complex_output_0", "iq_mixer_lo0.if"),
+            ("lo0.output", "iq_mixer_lo0.lo"),
+            ("iq_mixer_lo0.rf", "q4:mw"),
+            ("cluster0.module2.complex_output_0", "q5:mw"),
+        ]
     },
 }
 ```
@@ -142,13 +128,14 @@ quantum_device.hardware_config(hardware_compilation_cfg)
 hardware_compile(schedule=test_sched, config=quantum_device.generate_compilation_config())
 ```
 
-Notice the {code}`"quantify_scheduler.backends.qblox_backend.hardware_compile"` backend is used. 
+Notice the {class}`quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig` config type is used.
 In the example, the Cluster is specified using an instrument with {code}`"instrument_type": "Cluster"`. In the backend, the Cluster instrument functions as a collection of modules.
 
 The only instrument types that can be at the top level are:
 - {code}`"Cluster"`,
 - {code}`"LocalOscillator"`.
 
+(sec-cluster-hardware-description)=
 ## Hardware description
 
 To compile to a Cluster, one should include a valid {class}`~.backends.types.qblox.ClusterDescription` in the `"hardware_description"` part of the hardware compilation config.
@@ -187,7 +174,7 @@ For a complex input/output, this datastructure is:
 
 The markers can be configured by adding a `"marker_debug_mode_enable"` key to the {class}`~.backends.types.qblox.ComplexChannelDescription` 
 (or {class}`~.backends.types.qblox.RealChannelDescription`). 
-If the value is set to `True`, the operations defined for this I/O will be accompanied by a 4 ns trigger pulse on the marker located next to the I/O port.
+If the value is set to `True`, the operations defined for this channel will be accompanied by a 4 ns trigger pulse on the marker located next to the I/O port.
 The marker will be pulled high at the same time as the module starts playing or acquiring.
 ```{code-block} python
 ---
@@ -196,7 +183,7 @@ linenos: true
 ---
 
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {
         "cluster0": {
             "instrument_type": "Cluster",
@@ -227,7 +214,7 @@ emphasize-lines: 7
 linenos: true
 ---
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {
         "cluster0": {
             "instrument_type": "Cluster",
@@ -260,7 +247,7 @@ linenos: true
 ---
 
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {
         "cluster0": {
             "instrument_type": "Cluster",
@@ -281,99 +268,36 @@ hardware_compilation_cfg = {
                 },
             }
         },
-        "lo1": {"instrument_type": "LocalOscillator", "power": 20},
+        "lo0": {"instrument_type": "LocalOscillator", "power": 20},
+        "iq_mixer_lo0": {"instrument_type": "IQMixer"},
     },
     "hardware_options": {
         "modulation_frequencies": {
             "q0:mw-q0.01": {
                 "interm_freq": 50e6
             },
-        },
-    },
-    "connectivity": {
-        "cluster0": {
-            "cluster0_module1": {
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "clock": "q0.01",
-                            "port": "q0:mw"
-                        }
-                    ]
-                },
-            },
-            "cluster0_module2": {
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "clock": "q0.01",
-                            "port": "q0:mw"
-                        }
-                    ]
-                },
-            },
-        },
-    },
-}
-```
-
-### Local Oscillator description
-
-A local oscillator instrument can be used with baseband modules. After adding the instrument, we can reference it in a baseband-module output via the `"lo_name"` key.
-
-The two mandatory parameters are the `"instrument_type"` (which should be `"LocalOscillator"`), and `"power"`. The local oscillator frequency is then controlled through the `"modulation_frequencies"` hardware option (see {ref}`sec-qblox-modulation-frequencies`), under the key of the port-clock combination associated with the baseband-module output.
-
-Note that it is possible to add `"generic_icc_name"` as an optional parameter to the local oscillator hardware description, but only the default name `"generic"` is supported currently with the Qblox backend.
-
-```{code-block} python
----
-  emphasize-lines: 5,6,7,8,13,21
-  linenos: true
----
-hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
-    "hardware_description": {
-        "cluster0": {...},
-        "lo1": {
-            "instrument_type": "LocalOscillator",
-            "power": 20
-        },
-    },
-    "hardware_options": {
-        "modulation_frequencies": {
             "q1:mw-q1.01": {
-                "lo_freq": 5e9
-            }
-        }
-    },
-    "connectivity": {
-        "cluster0": {
-            "cluster0_module1": {
-                "complex_output_1": {
-                    "lo_name": "lo1",
-                    "portclock_configs": [
-                        {
-                            "clock": "q1.01",
-                            "port": "q1:mw"
-                        }
-                    ]
-                },
+                "interm_freq": 50e6
             },
         },
-    }
+    },
+    "connectivity": {
+        "graph": [
+            ("cluster0.module1.complex_output_0", "iq_mixer_lo0.if"),
+            ("lo0.output", "iq_mixer_lo0.lo"),
+            ("iq_mixer_lo0.rf", "q0:mw"),
+            ("cluster0.module2.complex_output_0", "q1:mw"),
+        ]
+    },
 }
 ```
 
 (sec-qblox-connectivity)=
 
 ## Connectivity
-The {class}`~.backends.types.common.Connectivity` describes how the inputs/outputs of the Cluster modules are connected to ports on the {class}`~.device_under_test.quantum_device.QuantumDevice`.
+The {class}`~.backends.types.common.Connectivity` describes how the inputs/outputs of the Cluster modules are connected to ports on the {class}`~.device_under_test.quantum_device.QuantumDevice`. As described in {ref}`sec-connectivity` in the User guide, the connectivity datastructure can be parsed from a list of edges, which are described by a pair of strings that each specify a port on the quantum device, on the cluster modules, or on other auxiliary instruments (like external IQ mixers).
 
-```{note}
-The {class}`~.backends.types.common.Connectivity` datastructure is currently under development. Information on the connectivity between port-clock combinations on the quantum device and ports on the control hardware is currently included in the old-style hardware configuration file, which should be included in the `"connectivity"` field of the {class}`~.backends.types.common.HardwareCompilationConfig`.
-```
-
-The possible inputs/outputs are
+Each input/output node of the Cluster should be specified in the connectivity as `"{cluster_name}.module{module_slot_index}.{channel_name}"`. For each module, the possible input/output names are the same as the allowed fields in the corresponding {obj}`~.backends.types.qblox.ClusterModuleDescription` datastructure:
 - for `"QCM"`: `"complex_output_{0,1}"`, `"real_output_{0,1,2,3}"`,
 - for `"QRM"`: `"complex_{output,input}_0"`, `"real_{output,input}_{0,1}"`,
 - for `"QCM_RF"`: `"complex_output_{0,1}"`,
@@ -383,24 +307,17 @@ The possible inputs/outputs are
 For RF hardware, if an output is unused, it will be turned off. This is to ensure that unused local oscillators do not interfere with used outputs.
 ```
 
+The connectivity can be visualized using:
 
-### Port-clock configuration
+```{code-cell} ipython3
+from quantify_scheduler.backends.types.common import Connectivity
 
-Under these `"{complex,real}_{x}"` keys, we specify the port-clock combinations an output may target
-(see the {ref}`sec-user-guide-ports-clocks` for more information on the role of ports and clocks within `quantify-scheduler`).
-
-Each module can have at most 6 port-clock combinations defined, and the name for each `"port"` and `"clock"` combination must be unique. Each of these port-clock combinations is associated with one sequencer in the Qblox hardware.
-
-```{note}
-If you use gate-level operations, you have to follow strict rules for each kind of operation on which port name you can use (what's the naming convention for each port resource).
-- `"<device element name>:mw"` for `Rxy` operation (and its derived operations),
-- `"<device element name>:res"` for any measure operation,
-- `"<device element name>:fl"` for the flux port.
+connectivity = Connectivity.model_validate(hardware_compilation_cfg["connectivity"])
+connectivity.draw()
 ```
 
-### Frequency multiplexing
-
-It is possible to do frequency multiplexing of the signals by adding multiple port-clock configurations to the same output.
+### Ports and clocks
+Each module can target at most 6 port-clock combinations within a schedule. Each of these port-clock combinations is associated with one sequencer in the Qblox hardware. See the {ref}`sec-user-guide-ports-clocks` section in the User guide for more information on the role of ports and clocks within `quantify-scheduler`.
 
 ```{code-cell} ipython3
 ---
@@ -409,7 +326,7 @@ mystnb:
   remove_code_outputs: true
 ---
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {
         "cluster0": {
             "instrument_type": "Cluster",
@@ -423,32 +340,17 @@ hardware_compilation_cfg = {
     },
     "hardware_options": {},
     "connectivity": {
-        "cluster0": {
-            "cluster0_module1": {
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "port": "q0:mw",
-                            "clock": "q0.01",
-                        },
-                        {
-                            "port": "q0:mw",
-                            "clock": "some_other_clock",
-                        }
-                    ]
-                },
-                "complex_output_1": {
-                    "portclock_configs": [
-                        {
-                            "port": "q1:mw",
-                            "clock": "q1.01",
-                        }
-                    ]
-                }
-            },
-        }
+        "graph": [
+            ("cluster0.module1.complex_output_0", "q0:mw"),
+        ]
     }
 }
+
+sched = Schedule("Single pulse schedule")
+sched.add(
+    SquarePulse(amp=1, duration=1e-6, port="q0:mw", clock="q0.01")
+)
+sched.add_resource(ClockResource(name="q0.01", freq=200e6))
 ```
 
 ```{code-cell} ipython3
@@ -457,44 +359,36 @@ mystnb:
   remove_code_source: true
   remove_code_outputs: true
 ---
-
-test_sched = Schedule("test_sched")
-test_sched.add(
-    SquarePulse(amp=1, duration=1e-6, port="q0:mw", clock="q0.01")
-)
-test_sched.add_resource(ClockResource(name="q0.01", freq=200e6))
-test_sched.add_resource(ClockResource(name="some_other_clock", freq=100e6))
-
-test_sched = _determine_absolute_timing(test_sched)
+sched = _determine_absolute_timing(sched)
 
 quantum_device.hardware_config(hardware_compilation_cfg)
-hardware_compile(schedule=test_sched, config=quantum_device.generate_compilation_config())
+hardware_compile(schedule=sched, config=quantum_device.generate_compilation_config())
 ```
-
-In the given example, we added a second port-clock configuration to output 0. Now any signal on port {code}`"q0:mw"` with clock {code}`"some_other_clock"` will be added digitally to the signal with the same port but clock {code}`"q0.01"`. 
-The Qblox modules have six sequencers available, which sets the upper limit to our multiplexing capabilities.
 
 ```{note}
-The backend requires that each _combination_ of a port and a clock is unique, that is, it is possible to use a certain port or clock multiple times but the combination of a port with a certain clock can only be used once in the hardware compilation config.
+With gate-level operations, you have to follow strict port naming:
+- `"<device element name>:mw"` for `Rxy` operation (and its derived operations),
+- `"<device element name>:res"` for any measure operation,
+- `"<device element name>:fl"` for the flux port.
 ```
 
-### Complex I/O
+### Complex channel
 
-A complex I/O is defined by adding a `"complex_{output, input}_<n>"` to the module configuration.
+A complex channel is defined by including a `"complex_{output, input}_<n>"` in the connectivity.
 Complex outputs (e.g. `complex_output_0`) are used for playbacks, while complex inputs (e.g. `complex_input_0`) are used for acquisitions.
 However, for readout modules it is possible to use the `complex_output_<n>` key for both playbacks and acquisitions.
 
 ```{note}
-It is not possible to use the same port-clock combination multiple times in the hardware compilation config. In that case, it is required to use only the `complex_output_<n>` key.
+When using a port and clock combination for both playback and acquisition, only set up the `complex_output_<n>`.
 ```
 
 ```{code-block} python
 ---
-emphasize-lines: 9,18,26,34
+emphasize-lines: 17,18
 linenos: true
 ---
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {
         "cluster0": {
             "instrument_type": "Cluster",
@@ -508,59 +402,35 @@ hardware_compilation_cfg = {
     }
     "hardware_options": {...},
     "connectivity": {
-        "cluster0": {
-            "cluster0_module1": {
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "port": "q0:mw",
-                            "clock": "q0.01",
-                        }
-                    ]
-                },
-                "complex_output_1": {
-                    "portclock_configs": [
-                        {
-                            "port": "q0:res",
-                            "clock": "q0.ro",
-                        }
-                    ]
-                },
-                "complex_input_0": {
-                    "portclock_configs": [
-                        {
-                            "port": "q1:res",
-                            "clock": "q1.ro",
-                        }
-                    ]
-                }
-            }
-        },
+        "graph": [
+            ("cluster0.module1.complex_output_0", "q0:res"),
+            ("cluster0.module1.complex_input_0", "q1:res")
+        ]
     }
 }
 ```
 
-### Real I/O
+### Real channel
 
-A real I/O is defined by adding a `real_{output, input}_<n>` to the module configuration.
+A real channel is defined by including a `real_{output, input}_<n>` in the connectivity.
 Real outputs (e.g. `real_output_0`) are used for playbacks, while real inputs (e.g. `real_input_0`) are used for acquisitions.
 However, for readout modules it is possible to use the `real_output_<n>` key for both playbacks and acquisitions.
-When using a real I/O, the backend automatically maps the signals to the correct output paths.
+When using a real channel, the backend automatically maps the signals to the correct output paths.
+
+Note that the backend throws an error when using a real channel for pulses with an imaginary component. For example, square and ramp pulses are allowed, but DRAG pulses are not.
 
 ```{note}
-It is not possible to use the same port-clock combination multiple times in the hardware compilation config. In that case, it is required to use only the `real_output_<n>` key.
+When using a port and clock combination for both playback and acquisition, only set up the `real_output_<n>`.
 ```
 
-For a real I/O, it is not allowed to use any pulses that have an imaginary component, i.e., only real valued pulses are allowed.
-If you were to use a complex pulse, the backend will produce an error, e.g., square and ramp pulses are allowed but DRAG pulses are not.
 
 ```{code-block} python
 ---
-emphasize-lines: 9,18,26,34
+emphasize-lines: 17,18,19
 linenos: true
 ---
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {
         "cluster0": {
             "instrument_type": "Cluster",
@@ -574,65 +444,34 @@ hardware_compilation_cfg = {
     }
     "hardware_options": {...},
     "connectivity": {
-        "cluster0": {
-            "cluster0_module1": {
-                "real_output_0": {
-                    "portclock_configs": [
-                        {
-                            "port": "q0:mw",
-                            "clock": "q0.01",
-                        }
-                    ]
-                },
-                "real_output_1": {
-                    "portclock_configs": [
-                        {
-                            "port": "q0:res",
-                            "clock": "q0.ro",
-                        }
-                    ]
-                },
-                "real_input_0": {
-                    "portclock_configs": [
-                        {
-                            "port": "q1:res",
-                            "clock": "q1.ro",
-                        }
-                    ]
-                }
-            }
-        },
+        "graph": [
+            ("cluster0.module1.real_output_0", "q0:mw"),
+            ("cluster0.module1.real_output_1", "q0:res"),
+            ("cluster0.module1.real_input_0", "q1:res")
+        ]
     }
 }
 ```
 
-### Digital I/O
+### Digital channel
 
-The markers can be controlled by defining a digital I/O, and adding a `MarkerPulse` on this I/O.
-A digital I/O is defined by adding a `"digital_output_n"` to the module configuration. `n` is the number of the digital output port.
-For a digital I/O only a port is required, no clocks or other parameters are needed.
+The markers can be controlled by defining a digital channel, and adding a `MarkerPulse` on this channel.
+A digital channel is defined by adding a `"digital_output_n"` to the connectivity. `n` is the number of the digital output port.
+For a digital channel only a port is required, no clocks or other parameters are needed.
 
 ```{code-block} python
 ---
-emphasize-lines: 8
+emphasize-lines: 7
 linenos: true
 ---
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {...},
     "hardware_options": {...},
     "connectivity": {
-        "cluster0": {
-            "cluster0_module1": {
-                "digital_output_0": {
-                    "portclock_configs": [
-                        {
-                            "port": "q0:switch",
-                        },
-                    ],   
-                },
-            },
-        },
+        "graph": [
+            ("cluster0.module1.digital_output_0", "q0:switch")
+        ]
     }
 }
 ```
@@ -642,8 +481,105 @@ The `MarkerPulse` is defined by adding a `MarkerPulse` to the sequence in questi
 schedule.add(MarkerPulse(duration=52e-9, port="q0:switch"))
 ```
 
+### External IQ mixers and local oscillators
+
+Baseband modules can be connected to external IQ mixers and local oscillators. To achieve this, you should add a {class}`~.quantify_scheduler.backends.types.common.IQMixerDescription` and {class}`~.quantify_scheduler.backends.types.common.LocalOscillatorDescription` to the `"hardware_description"` part of the hardware compilation config, and specify the connections of the `"if"`, `"lo"` and `"rf"` ports on the IQ mixer in the `"connectivity"` part of the hardware compilation config. The compiler will then use this information to assign the pulses and acquisitions to the port on the baseband module that is connected to the `"if"` port on the IQ mixer, and set the local oscillator and intermodulation frequencies accordingly.
+
+```{admonition} Local Oscillator Description
+It is possible to add `"generic_icc_name"` as an optional parameter to the local oscillator hardware description, but only the default name `"generic"` is supported currently with the Qblox backend.
+```
+
+```{code-block} python
+---
+  emphasize-lines: 5,6,7,8,9,14,20,21,22
+  linenos: true
+---
+hardware_compilation_cfg = {
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+    "hardware_description": {
+        "cluster0": {...},
+        "lo0": {
+            "instrument_type": "LocalOscillator",
+            "power": 20
+        },
+        "iq_mixer_lo0": {"instrument_type": "IQMixer"},
+    },
+    "hardware_options": {
+        "modulation_frequencies": {
+            "q1:mw-q1.01": {
+                "lo_freq": 5e9
+            }
+        }
+    },
+    "connectivity": {
+        "graph": [
+            ("cluster0.module1.complex_output_1", "iq_mixer_lo0.if"),
+            ("lo0.output", "iq_mixer_lo0.lo"),
+            ("iq_mixer_lo0.rf", "q1:mw"),
+        ]
+    }
+}
+```
+
+### Frequency multiplexing
+
+It is possible to do frequency multiplexing of the signals without changing the connectivity: by adding operations on the same port, but with different clocks.
+
+```{code-cell} ipython3
+---
+mystnb:
+  number_source_lines: true
+  remove_code_outputs: true
+---
+hardware_compilation_cfg = {
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+    "hardware_description": {
+        "cluster0": {
+            "instrument_type": "Cluster",
+            "ref": "internal",
+            "modules": {
+                "1": {
+                    "instrument_type": "QCM"
+                },
+            }
+        },
+    },
+    "hardware_options": {},
+    "connectivity": {
+        "graph": [
+            ("cluster0.module1.complex_output_0", "q0:mw"),
+        ]
+    }
+}
+
+sched = Schedule("Multiplexed schedule")
+sched.add(
+    SquarePulse(amp=1, duration=1e-6, port="q0:mw", clock="q0.01")
+)
+sched.add(
+    SquarePulse(amp=0.5, duration=1e-6, port="q0:mw", clock="some_other_clock")
+)
+sched.add_resource(ClockResource(name="q0.01", freq=200e6))
+sched.add_resource(ClockResource(name="some_other_clock", freq=100e6))
+```
+
+```{code-cell} ipython3
+---
+mystnb:
+  remove_code_source: true
+  remove_code_outputs: true
+---
+sched = _determine_absolute_timing(sched)
+
+quantum_device.hardware_config(hardware_compilation_cfg)
+hardware_compile(schedule=sched, config=quantum_device.generate_compilation_config())
+```
+
+In the given example, we add two pulses on the same port but with different clocks. Now any signal on port {code}`"q0:mw"` with clock {code}`"some_other_clock"` will be added digitally to the signal with the same port but clock {code}`"q0.01"`. 
+The Qblox modules have six sequencers available, which sets the upper limit to our multiplexing capabilities.
 
 
+(sec-cluster-hardware-options)=
 ## Hardware options
 The {class}`~.backends.types.qblox.QbloxHardwareOptions` datastructure contains the settings used in compiling from the quantum-device layer to a set of instructions for the control hardware.
 
@@ -670,9 +606,9 @@ You can specify {math}`f_{RF}` in multiple ways. You can specify it when you add
 
 ```{note}
 If you use gate-level operations, you have to follow strict rules for the naming of the clock resource, for each kind of operation:
-- `"<transmon name>.01"` for `Rxy` operation (and its derived operations),
-- `"<transmon name>.ro"` for any measure operation,
-- `"<transmon name>.12"` for the {math}`|1\rangle \rightarrow |2\rangle` transition.
+- `"<device element name>.01"` for `Rxy` operation (and its derived operations),
+- `"<device element name>.ro"` for any measure operation,
+- `"<device element name>.12"` for the {math}`|1\rangle \rightarrow |2\rangle` transition.
 ```
 
 Then:
@@ -705,7 +641,7 @@ from quantify_scheduler.operations.pulse_library import SquarePulse
 from quantify_scheduler.resources import ClockResource
 
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {
         "cluster0": {
             "instrument_type": "Cluster",
@@ -719,7 +655,8 @@ hardware_compilation_cfg = {
                 },
             }
         },
-        "lo1": {"instrument_type": "LocalOscillator", "power": 20},
+        "lo0": {"instrument_type": "LocalOscillator", "power": 20},
+        "iq_mixer_lo0": {"instrument_type": "IQMixer"},
     },
     "hardware_options": {
         "modulation_frequencies": {
@@ -735,46 +672,15 @@ hardware_compilation_cfg = {
         },
     },
     "connectivity": {
-        "cluster0": {
-            "cluster0_module1": {
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "clock": "q0.01",
-                            "port": "q0:mw"
-                        }
-                    ]
-                },
-                "complex_output_1": {
-                    "lo_name": "lo1",
-                    "portclock_configs": [
-                        {
-                            "clock": "q1.01",
-                            "port": "q1:mw"
-                        }
-                    ]
-                },
-            },
-            "cluster0_module2": {
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "clock": "q2.01",
-                            "port": "q2:mw"
-                        }
-                    ]
-                },
-                "complex_output_1": {
-                    "portclock_configs": [
-                        {
-                            "clock": "q3.01",
-                            "port": "q3:mw"
-                        }
-                    ]
-                },
-            },
-        },
-    },
+        "graph": [
+            ("cluster0.module1.complex_output_0", "q0:mw"),
+            ("cluster0.module1.complex_output_1", "iq_mixer_lo0.if"),
+            ("lo0.output", "iq_mixer_lo0.lo"),
+            ("iq_mixer_lo0.rf", "q1:mw"),
+            ("cluster0.module2.complex_output_0", "q2:mw"),
+            ("cluster0.module2.complex_output_1", "q3:mw"),
+        ]
+    }
 }
 
 test_sched = Schedule("test_sched")
@@ -810,7 +716,7 @@ emphasize-lines: 8,9,10,11
 linenos: true
 ---
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {...},
     "connectivity": {...},
     "hardware_options": {
@@ -843,7 +749,7 @@ emphasize-lines: 18-24
 linenos: true
 ---
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {
         "cluster0": {
             "instrument_type": "Cluster",
@@ -868,28 +774,10 @@ hardware_compilation_cfg = {
         },
     },
     "connectivity": {
-        "cluster0": {
-            "cluster0_module1": {
-                "complex_input_0": {
-                    "portclock_configs": [
-                        {
-                            "clock": "q0.ro",
-                            "port": "q0:res",
-                        },
-                    ]
-                },
-            },
-            "cluster0_module2": {
-                "real_input_0": {
-                    "portclock_configs": [
-                        {
-                            "clock": "cl0.baseband",
-                            "port": "q0:fl"
-                        }
-                    ]
-                },
-            },
-        }
+        "graph": [
+            ("cluster0.module1.complex_input_0", "q0:res"),
+            ("cluster0.module2.real_input_0", "q0:fl"),
+        ]
     }
 }
 ```
@@ -908,7 +796,7 @@ emphasize-lines: 18-24
 linenos: true
 ---
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {
         "cluster0": {
             "instrument_type": "Cluster",
@@ -933,28 +821,10 @@ hardware_compilation_cfg = {
         }
     },
     "connectivity": {
-        "cluster0": {
-            "cluster0_module1": {
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "clock": "q0.res",
-                            "port": "q0:ro",
-                        },
-                    ]
-                },
-            },
-            "cluster0_module2": {
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "clock": "q0.01",
-                            "port": "q0:mw"
-                        }
-                    ]
-                },
-            },
-        }
+        "graph": [
+            ("cluster0.module1.complex_output_0", "q0:res"),
+            ("cluster0.module2.complex_output_0", "q0:mw"),
+        ]
     }
 }
 ```
@@ -975,7 +845,7 @@ emphasize-lines: 6
 linenos: true
 ---
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {...},
     "connectivity": {...},
     "hardware_options": {
@@ -999,7 +869,7 @@ emphasize-lines: 6
 linenos: true
 ---
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {...},
     "connectivity": {...},
     "hardware_options": {
@@ -1015,6 +885,7 @@ hardware_compilation_cfg = {
             }
         }
     }
+}
 ```
 
 If `"distortion_corrections"` are set, then `"filter_func"`, `"input_var_name"` and `"kwargs"` are required. If `"clipping_values"` are set, its value must be a list with exactly 2 floats.
@@ -1054,7 +925,7 @@ def _func_for_hook_test(qasm: QASMProgram):
     )
 
 hardware_compilation_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "hardware_description": {...},
     "hardware_options": {
         "sequencer_options": {
@@ -1065,87 +936,6 @@ hardware_compilation_cfg = {
     },
     "connectivity": {...}
 }
-```
-
-(sec-qblox-cluster-long-waveform-support-new)=
-## Long waveform support
-
-The sequencers in Qblox modules have a sample limit of {class}`~quantify_scheduler.backends.qblox.constants.MAX_SAMPLE_SIZE_WAVEFORMS` per sequencer. For certain waveforms, however, it is possible to use the sequencers more efficiently and using less waveform memory, allowing for longer waveforms. This section explains how to do this, utilizing the {class}`~quantify_scheduler.operations.stitched_pulse.StitchedPulse`. Also see {ref}`sec-long-waveforms-via-stitchedpulse` of {ref}`sec-tutorial-sched-pulse`.
-
-- For a few standard waveforms, the square pulse, ramp pulse and staircase pulse, the following helper functions create a {class}`~quantify_scheduler.operations.stitched_pulse.StitchedPulse` that can readily be added to schedules:
-
-```{code-cell} ipython3
----
-mystnb:
-  number_source_lines: true
-  remove_code_outputs: true
----
-
-from quantify_scheduler.operations.pulse_factories import (
-    long_ramp_pulse,
-    long_square_pulse,
-    staircase_pulse,
-)
-
-ramp_pulse = long_ramp_pulse(amp=0.5, duration=1e-3, port="q0:mw")
-square_pulse = long_square_pulse(amp=0.5, duration=1e-3, port="q0:mw")
-staircase_pulse = staircase_pulse(
-    start_amp=0.0, final_amp=1.0, num_steps=20, duration=1e-4, port="q0:mw"
-)
-```
-
-- More complex waveforms can be created from the {class}`~quantify_scheduler.operations.stitched_pulse.StitchedPulseBuilder`. This class allows you to construct complex waveforms by stitching together available pulses, and adding voltage offsets in between. Voltage offsets can be specified with or without a duration. In the latter case, the offset will hold until the last operation in the {class}`~quantify_scheduler.operations.stitched_pulse.StitchedPulse` ends. For example:
-
-```{code-cell} ipython3
----
-mystnb:
-  number_source_lines: true
-  remove_code_outputs: true
----
-
-from quantify_scheduler.operations.pulse_library import RampPulse
-from quantify_scheduler.operations.stitched_pulse import StitchedPulseBuilder
-
-trapezoid_pulse = (
-    StitchedPulseBuilder(port="q0:mw", clock="q0.01")
-    .add_pulse(RampPulse(amp=0.5, duration=1e-8, port="q0:mw"))
-    .add_voltage_offset(path_0=0.5, path_1=0.0, duration=1e-7)
-    .add_pulse(RampPulse(amp=-0.5, offset=0.5, duration=1e-8, port="q0:mw"))
-    .build()
-)
-
-repeat_pulse_with_offset = (
-    StitchedPulseBuilder(port="q0:mw", clock="q0.01")
-    .add_pulse(RampPulse(amp=0.2, duration=8e-6, port="q0:mw"))
-    .add_voltage_offset(path_0=0.4, path_1=0.0)
-    .add_pulse(RampPulse(amp=0.2, duration=8e-6, port="q0:mw"))
-    .build()
-)
-```
-
-- Pulses and offsets are appended to the end of the last added operation by default. By specifying the `append=False` keyword argument in the `add_pulse` and `add_voltage_offset` methods, in combination with the `rel_time` argument, you can insert an operation at the specified time relative to the start of the {class}`~quantify_scheduler.operations.stitched_pulse.StitchedPulse`. The example below uses this to generate a series of square pulses of various durations and amplitudes:
-
-```{code-cell} ipython3
----
-mystnb:
-  number_source_lines: true
-  remove_code_outputs: true
----
-
-from quantify_scheduler.operations.stitched_pulse import StitchedPulseBuilder
-
-offsets = [0.3, 0.4, 0.5]
-durations = [1e-6, 2e-6, 1e-6]
-start_times = [0.0, 2e-6, 6e-6]
-
-builder = StitchedPulseBuilder(port="q0:mw", clock="q0.01")
-
-for offset, duration, t_start in zip(offsets, durations, start_times):
-    builder.add_voltage_offset(
-        path_0=offset, path_1=0.0, duration=duration, append=False, rel_time=t_start
-    )
-
-pulse = builder.build()
 ```
 
 ## Debug mode compilation

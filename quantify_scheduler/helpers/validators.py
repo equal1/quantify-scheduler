@@ -1,36 +1,41 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
-
+"""Module containing pydantic validators."""
 import numpy as np
+from typing import Hashable
+
 from qcodes.utils import validators
-from qcodes.utils.validators import numbertypes
+from qcodes.utils.validators import numbertypes, Validator
 
 
 # this is a custom qcodes Numbers validator that allows for nan values.
 class Numbers(validators.Numbers):
+    """
+    A custom qcodes Numbers validator that allows for nan values.
+
+    Requires a number  of type int, float, numpy.integer or numpy.floating.
+
+    Parameters
+    ----------
+    min_value:
+        Minimal value allowed, default -inf.
+    max_value:
+        Maximal value allowed, default inf.
+    allow_nan:
+        if nan values are allowed, default False.
+
+    Raises
+    ------
+    TypeError: If min or max value not a number. Or if min_value is
+        larger than the max_value.
+    """
+
     def __init__(
         self,
         min_value: numbertypes = -np.inf,
         max_value: numbertypes = np.inf,
         allow_nan: bool = False,
     ) -> None:
-        """
-        Requires a number  of type int, float, numpy.integer or numpy.floating.
-
-        Parameters
-        ----------
-        min_value:
-            Minimal value allowed, default -inf.
-        max_value:
-            Maximal value allowed, default inf.
-        allow_nan:
-            if nan values are allowed, default False.
-
-        Raises
-        ------
-        TypeError: If min or max value not a number. Or if min_value is
-            larger than the max_value.
-        """
         super().__init__(min_value, max_value)
         self._allow_nan = allow_nan
 
@@ -50,7 +55,6 @@ class Numbers(validators.Numbers):
         TypeError: If not int or float.
         ValueError: If number is not between the min and the max value.
         """
-
         if not isinstance(value, self.validtypes):
             raise TypeError(f"{repr(value)} is not an int or float; {context}")
 
@@ -102,3 +106,32 @@ class _Delays(Numbers):
         self,
     ) -> None:
         super().__init__(allow_nan=False)
+
+
+class _Hashable(Validator[Hashable]):
+    """Validator used for hashables."""
+
+    def __init__(self) -> None:
+        self._valid_values = (0, "str")
+
+    def validate(self, value: Hashable, context: str = "") -> None:
+        """
+        Validates if hashable else raises error.
+
+        Parameters
+        ----------
+        value
+            Value to validate
+        context
+            Context for validation.
+
+        Raises
+        ------
+        TypeError
+            If value is not hashable.
+        """
+        if not isinstance(value, Hashable):
+            raise TypeError(f"{value!r} is not Hashable; {context}")
+
+    def __repr__(self) -> str:
+        return "<Hashable>"

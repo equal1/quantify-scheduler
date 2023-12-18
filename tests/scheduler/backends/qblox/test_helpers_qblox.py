@@ -15,13 +15,21 @@ from typing import Union
 import pytest
 
 from quantify_scheduler.backends.qblox import helpers
-from quantify_scheduler.backends.qblox.enums import IoMode
 from quantify_scheduler.backends.qblox.instrument_compilers import (
-    QcmModule,
-    QcmRfModule,
     QrmModule,
-    QrmRfModule,
 )
+from quantify_scheduler.backends.qblox.qblox_hardware_config_old_style import (
+    hardware_config as qblox_hardware_config_old_style,
+)
+from quantify_scheduler.backends.qblox_backend import QbloxHardwareCompilationConfig
+from quantify_scheduler.backends.types.qblox import (
+    BasebandModuleSettings,
+)
+from quantify_scheduler.device_under_test.quantum_device import QuantumDevice
+from quantify_scheduler.device_under_test.transmon_element import BasicTransmonElement
+from quantify_scheduler.helpers.collections import find_all_port_clock_combinations
+from quantify_scheduler.operations.pulse_library import SquarePulse
+from quantify_scheduler.schedules.schedule import Schedule
 
 
 @pytest.mark.parametrize(
@@ -217,58 +225,133 @@ def test_Frequencies():
             freq.validate()
 
 
-@pytest.mark.parametrize(
-    "module",
-    [
-        QcmModule,
-        QrmModule,
-        QcmRfModule,
-        QrmRfModule,
-    ],
-)
-def test_validate_io_indices(module):
-    def _validate_io_indices(io_name: str, io_indices: tuple) -> tuple:
-        assert (
-            len(io_indices) > 0
-        ), "No inputs or output indices were selected for this sequencer."
+def test_generate_hardware_config(hardware_compilation_config_qblox_example):
+    sched = Schedule("All portclocks schedule")
+    quantum_device = QuantumDevice("All_portclocks_device")
+    quantum_device.hardware_config(hardware_compilation_config_qblox_example)
 
-        assert (
-            len(io_indices) <= 2
-        ), f"Too many ios specified for this channel. Given: {io_indices}"
+    qubits = {}
+    sched = Schedule("All portclocks schedule")
+    for port, clock in find_all_port_clock_combinations(
+        qblox_hardware_config_old_style
+    ):
+        sched.add(SquarePulse(port=port, clock=clock, amp=0.25, duration=12e-9))
+        if (qubit_name := port.split(":")[0]) not in quantum_device.elements():
+            qubits[qubit_name] = BasicTransmonElement(qubit_name)
+            quantum_device.add_element(qubits[qubit_name])
 
-        if len(io_indices) == 2:
-            assert (
-                "complex" in io_name
-            ), f"Two io indices specified for {io_name}, but it must have one."
-            assert sorted(io_indices) in (
-                [0, 1],
-                [2, 3],
-            ), "Attempting to use two paths belonging to different sequencers."
+    generated_hw_config = helpers.generate_hardware_config(
+        schedule=sched, compilation_config=quantum_device.generate_compilation_config()
+    )
 
-        elif len(io_indices) == 1:
-            assert (
-                "complex" not in io_name
-            ), f"Only one io index specified for {io_name}, but it must have two."
-
-        return
-
-    for io_name in module.static_hw_properties.valid_ios:
-        io_indices = (
-            helpers.output_name_to_output_indices(io_name)
-            if "output" in io_name
-            else helpers.input_name_to_input_indices(io_name)
-        )
-        _validate_io_indices(io_name, io_indices)
+    assert generated_hw_config == qblox_hardware_config_old_style
 
 
-@pytest.mark.parametrize(
-    "io_name, sequencer_mode",
-    [
-        ("complex_output_0", IoMode.COMPLEX),
-        ("real_output_0", IoMode.REAL),
-        ("real_output_1", IoMode.IMAG),
-        ("digital_output_0", IoMode.DIGITAL),
-    ],
-)
-def test_validate_sequencer_mode(io_name, sequencer_mode):
-    assert sequencer_mode == helpers.get_io_info(io_name)[0]
+def test_preprocess_legacy_hardware_config():
+    hardware_config = {
+        "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+        "cluster0": {
+            "instrument_type": "Cluster",
+            "ref": "internal",
+            "cluster0_module1": {
+                "instrument_type": "QCM_RF",
+                "complex_output_0": {
+                    "portclock_configs": [
+                        {
+                            "port": "q2:mw",
+                            "clock": "q2.01",
+                            "init_offset_awg_path_0": 0.1,
+                            "init_offset_awg_path_1": -0.1,
+                            "init_gain_awg_path_0": 0.55,
+                            "init_gain_awg_path_1": 0.66,
+                        }
+                    ],
+                },
+            },
+        },
+    }
+
+    preprocessed_hardware_config = helpers._preprocess_legacy_hardware_config(
+        hardware_config
+    )
+    assert preprocessed_hardware_config["cluster0"]["cluster0_module1"][
+        "complex_output_0"
+    ]["portclock_configs"][0] == {
+        "port": "q2:mw",
+        "clock": "q2.01",
+        "init_offset_awg_path_I": 0.1,
+        "init_offset_awg_path_Q": -0.1,
+        "init_gain_awg_path_I": 0.55,
+        "init_gain_awg_path_Q": 0.66,
+    }
+
+
+def test_configure_input_gains_overwrite_gain():
+    # Partial test of overwriting gain setting. Note: In using the new
+    # QbloxHardwareOptions collisions like these are no longer possible,
+    # so after migrating to the new-style hardware compilation config
+    # this test can be removed
+
+    instrument_cfg = {
+        "instrument_type": "QRM",
+        "real_output_1": {
+            "input_gain_1": 10,
+            "portclock_configs": [
+                {"port": "q0:res", "clock": "q0.ro"},
+            ],
+        },
+    }
+
+    test_module = QrmModule(
+        parent=None,
+        name="tester",
+        total_play_time=1,
+        instrument_cfg=instrument_cfg,
+    )
+
+    test_module._settings = BasebandModuleSettings.extract_settings_from_mapping(
+        instrument_cfg
+    )
+    test_module._settings.in1_gain = 5
+
+    with pytest.raises(ValueError) as error:
+        test_module._configure_input_gains()
+
+    assert (
+        str(error.value)
+        == "Overwriting gain of real_output_1 of module tester to in1_gain: 10."
+        "\nIt was previously set to in1_gain: 5."
+    )
+
+
+def test_generate_new_style_hardware_compilation_config(
+    hardware_compilation_config_qblox_example,
+):
+    parsed_new_style_config = QbloxHardwareCompilationConfig.model_validate(
+        hardware_compilation_config_qblox_example
+    )
+
+    converted_new_style_hw_cfg = QbloxHardwareCompilationConfig.model_validate(
+        qblox_hardware_config_old_style
+    )
+
+    # Partial checks
+    # HardwareDescription
+    assert (
+        converted_new_style_hw_cfg.model_dump()["hardware_description"]
+        == parsed_new_style_config.model_dump()["hardware_description"]
+    )
+    # Connectivity
+    assert list(converted_new_style_hw_cfg.connectivity.graph.edges) == list(
+        parsed_new_style_config.connectivity.graph.edges
+    )
+    # HardwareOptions
+    assert (
+        converted_new_style_hw_cfg.model_dump()["hardware_options"]
+        == parsed_new_style_config.model_dump()["hardware_options"]
+    )
+
+    # Write to dict to check equality of full config contents:
+    assert (
+        converted_new_style_hw_cfg.model_dump() == parsed_new_style_config.model_dump()
+    )

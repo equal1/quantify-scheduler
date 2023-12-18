@@ -1,9 +1,14 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
+"""Contains example device config for transmons."""
 
 example_transmon_cfg = {
-    "backend": "quantify_scheduler.backends.circuit_to_device"
-    + "._compile_circuit_to_device",
+    "compilation_passes": [
+        {
+            "name": "circuit_to_device",
+            "compilation_func": "quantify_scheduler.backends.circuit_to_device._compile_circuit_to_device",
+        }
+    ],
     "clocks": {
         "q0.01": 6020000000.0,
         "q0.ro": 7040000000.0,
@@ -37,7 +42,12 @@ example_transmon_cfg = {
             "measure": {
                 "factory_func": "quantify_scheduler.operations."
                 + "measurement_factories.dispersive_measurement",
-                "gate_info_factory_kwargs": ["acq_index", "bin_mode", "acq_protocol"],
+                "gate_info_factory_kwargs": [
+                    "acq_channel_override",
+                    "acq_index",
+                    "bin_mode",
+                    "acq_protocol",
+                ],
                 "factory_kwargs": {
                     "port": "q0:res",
                     "clock": "q0.ro",
@@ -78,7 +88,12 @@ example_transmon_cfg = {
             "measure": {
                 "factory_func": "quantify_scheduler.operations."
                 + "measurement_factories.dispersive_measurement",
-                "gate_info_factory_kwargs": ["acq_index", "bin_mode", "acq_protocol"],
+                "gate_info_factory_kwargs": [
+                    "acq_channel_override",
+                    "acq_index",
+                    "bin_mode",
+                    "acq_protocol",
+                ],
                 "factory_kwargs": {
                     "port": "q1:res",
                     "clock": "q1.ro",

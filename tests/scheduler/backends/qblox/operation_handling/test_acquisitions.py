@@ -43,6 +43,7 @@ from quantify_scheduler.instrument_coordinator.components.qblox import (
     QbloxInstrumentCoordinatorComponentBase,
 )
 from quantify_scheduler.operations.acquisition_library import SSBIntegrationComplex
+from quantify_scheduler.operations.control_flow_library import Loop
 from quantify_scheduler.operations.gate_library import Measure
 from quantify_scheduler.operations.pulse_library import SquarePulse
 from quantify_scheduler.resources import ClockResource
@@ -60,6 +61,7 @@ def fixture_empty_qasm_program():
         static_hw_properties=QrmModule.static_hw_properties,
         register_manager=RegisterManager(),
         align_fields=True,
+        acq_metadata=None,
     )
 
 
@@ -1294,12 +1296,12 @@ def test_complex_input_hardware_cfg(make_cluster_component, mock_setup_basic_tra
             "instrument_type": "Cluster",
             "cluster0_module3": {
                 "instrument_type": "QRM",
-                "complex_output_0": {
+                "complex_input_0": {
                     "portclock_configs": [
                         {"port": "q0:res", "clock": "q0.ro", "interm_freq": 50e6},
                     ],
                 },
-                "complex_input_0": {
+                "complex_output_0": {
                     "portclock_configs": [
                         {"port": "q1:res", "clock": "q1.ro", "interm_freq": 50e6},
                     ],
@@ -1344,7 +1346,7 @@ def test_complex_input_hardware_cfg(make_cluster_component, mock_setup_basic_tra
         slot_idx=3, sequencer=0, acq_index_name="0", data=dummy_binned_acquisition_data
     )
     ic_cluster0.instrument.set_dummy_binned_acquisition_data(
-        slot_idx=3, sequencer=1, acq_index_name="1", data=dummy_binned_acquisition_data
+        slot_idx=3, sequencer=1, acq_index_name="0", data=dummy_binned_acquisition_data
     )
 
     # Upload schedule and run experiment
@@ -1369,7 +1371,7 @@ def test_complex_input_hardware_cfg(make_cluster_component, mock_setup_basic_tra
     xr.testing.assert_equal(data, expected_dataset)
     assert compiled_sched.compiled_instructions["cluster0"]["cluster0_module3"][
         "sequencers"
-    ]["seq1"]["connected_inputs"] == [0, 1]
+    ]["seq0"]["connected_input_indices"] == [0, 1]
 
     instr_coordinator.remove_component("ic_cluster0")
 
@@ -1474,14 +1476,14 @@ def test_multi_real_input_hardware_cfg_trigger_count(
         "sequencers"
     ]["seq3"]
 
-    assert seq_0["connected_outputs"] == [0]
-    assert seq_0["nco_en"] is True
-    assert seq_1["connected_outputs"] == [1]
-    assert seq_1["nco_en"] is True
-    assert seq_2["connected_inputs"] == [0]
-    assert seq_2["ttl_acq_auto_bin_incr_en"] is False
-    assert seq_3["connected_inputs"] == [1]
-    assert seq_3["ttl_acq_auto_bin_incr_en"] is True
+    assert seq_0["connected_input_indices"] == [0]
+    assert seq_0["ttl_acq_auto_bin_incr_en"] is False
+    assert seq_1["connected_input_indices"] == [1]
+    assert seq_1["ttl_acq_auto_bin_incr_en"] is True
+    assert seq_2["connected_output_indices"] == [0]
+    assert seq_2["nco_en"] is True
+    assert seq_3["connected_output_indices"] == [1]
+    assert seq_3["nco_en"] is True
 
     instr_coordinator.remove_component("ic_cluster0")
 
@@ -1838,16 +1840,24 @@ def test_multiple_binned_measurements(
             port="q0:res", clock="q0.ro", duration=5e-6, acq_channel=2, acq_index=1
         )
     )
-    schedule.add(Measure("q1", acq_index=0, acq_protocol="SSBIntegrationComplex"))
-    schedule.add(Measure("q1", acq_index=1, acq_protocol="SSBIntegrationComplex"))
     schedule.add(
-        SSBIntegrationComplex(
-            port="q1:res", clock="q1.ro", duration=5e-6, acq_channel=1, acq_index=2
+        Measure(
+            "q1", acq_channel="ch_1", acq_index=0, acq_protocol="SSBIntegrationComplex"
+        )
+    )
+    schedule.add(
+        Measure(
+            "q1", acq_channel="ch_1", acq_index=1, acq_protocol="SSBIntegrationComplex"
         )
     )
     schedule.add(
         SSBIntegrationComplex(
-            port="q1:res", clock="q1.ro", duration=5e-6, acq_channel=1, acq_index=3
+            port="q1:res", clock="q1.ro", duration=5e-6, acq_channel="ch_1", acq_index=2
+        )
+    )
+    schedule.add(
+        SSBIntegrationComplex(
+            port="q1:res", clock="q1.ro", duration=5e-6, acq_channel="ch_1", acq_index=3
         )
     )
     schedule.add(
@@ -1885,7 +1895,7 @@ def test_multiple_binned_measurements(
     ic_cluster0.instrument.set_dummy_binned_acquisition_data(
         slot_idx=3,
         sequencer=0,
-        acq_index_name="2",
+        acq_index_name="1",
         data=[
             DummyBinnedAcquisitionData(data=(50000, 55000), thres=0, avg_cnt=0),
             DummyBinnedAcquisitionData(data=(60000, 65000), thres=0, avg_cnt=0),
@@ -1894,7 +1904,7 @@ def test_multiple_binned_measurements(
     ic_cluster0.instrument.set_dummy_binned_acquisition_data(
         slot_idx=4,
         sequencer=0,
-        acq_index_name="1",
+        acq_index_name="0",
         data=[
             DummyBinnedAcquisitionData(data=(100000, 150000), thres=0, avg_cnt=0),
             DummyBinnedAcquisitionData(data=(200000, 250000), thres=0, avg_cnt=0),
@@ -1905,7 +1915,7 @@ def test_multiple_binned_measurements(
     ic_cluster0.instrument.set_dummy_binned_acquisition_data(
         slot_idx=4,
         sequencer=0,
-        acq_index_name="3",
+        acq_index_name="1",
         data=[
             DummyBinnedAcquisitionData(data=(500000, 550000), thres=0, avg_cnt=0),
             DummyBinnedAcquisitionData(data=(600000, 650000), thres=0, avg_cnt=0),
@@ -1938,10 +1948,10 @@ def test_multiple_binned_measurements(
                 coords=[[0, 1]],
                 dims=["acq_index_2"],
             ),
-            1: DataArray(
+            "ch_1": DataArray(
                 [20 + 30j, 40 + 50j, 60 + 70j, 80 + 90j],
                 coords=[[0, 1, 2, 3]],
-                dims=["acq_index_1"],
+                dims=["acq_index_ch_1"],
             ),
             3: DataArray(
                 [100 + 110j, 120 + 130j],
@@ -2016,7 +2026,7 @@ def test_append_measurements(
     ic_cluster0.instrument.set_dummy_binned_acquisition_data(
         slot_idx=3,
         sequencer=0,
-        acq_index_name="1",
+        acq_index_name="0",
         data=[
             DummyBinnedAcquisitionData(data=(10000, 15000), thres=0, avg_cnt=0),
             DummyBinnedAcquisitionData(data=(20000, 25000), thres=0, avg_cnt=0),
@@ -2047,6 +2057,114 @@ def test_append_measurements(
                 [[2 + 3j, 4 + 5j], [6 + 7j, 8 + 9j], [10 + 11j, 12 + 13j]],
                 coords={"acq_index_1": [0, 1]},
                 dims=["repetition", "acq_index_1"],
+            ),
+        }
+    )
+
+    xr.testing.assert_equal(data, expected_dataset)
+
+    instr_coordinator.remove_component("ic_cluster0")
+
+
+def test_looped_measurements(
+    mock_setup_basic_transmon, make_cluster_component
+):  # pylint: disable=too-many-locals
+    hardware_cfg = {
+        "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+        "hardware_description": {
+            "cluster0": {
+                "instrument_type": "Cluster",
+                "ref": "internal",
+                "modules": {
+                    "3": {"instrument_type": "QRM"},
+                },
+            }
+        },
+        "hardware_options": {
+            "modulation_frequencies": {
+                "q0:res-q0.ro": {
+                    "interm_freq": 50e6,
+                }
+            }
+        },
+        "connectivity": {
+            "graph": [
+                ["cluster0.module3.complex_output_0", "q0:res"],
+            ]
+        },
+    }
+
+    # Setup objects needed for experiment
+    mock_setup = mock_setup_basic_transmon
+    ic_cluster0 = make_cluster_component("cluster0")
+
+    instr_coordinator = mock_setup["instrument_coordinator"]
+    instr_coordinator.add_component(ic_cluster0)
+
+    quantum_device = mock_setup["quantum_device"]
+    quantum_device.hardware_config(hardware_cfg)
+
+    q0 = mock_setup["q0"]
+    q0.clock_freqs.readout(50e6)
+
+    # Define experiment schedule
+    schedule = Schedule("test multiple measurements", repetitions=2)
+    schedule.add(
+        Measure(
+            "q0",
+            acq_index=0,
+            acq_protocol="SSBIntegrationComplex",
+            bin_mode=BinMode.APPEND,
+        ),
+        control_flow=Loop(3),
+    )
+
+    # Change acq delay, duration and channel
+    q0.measure.acq_delay(1e-6)
+    q0.measure.integration_time(5e-6)
+    q0.measure.acq_channel(0)
+
+    # Setup dummy acquisition data
+    ic_cluster0.instrument.set_dummy_binned_acquisition_data(
+        slot_idx=3,
+        sequencer=0,
+        acq_index_name="0",
+        data=[
+            DummyBinnedAcquisitionData(data=(10000, 15000), thres=0, avg_cnt=0),
+            DummyBinnedAcquisitionData(data=(20000, 25000), thres=0, avg_cnt=0),
+            DummyBinnedAcquisitionData(data=(30000, 35000), thres=0, avg_cnt=0),
+            DummyBinnedAcquisitionData(data=(40000, 45000), thres=0, avg_cnt=0),
+            DummyBinnedAcquisitionData(data=(50000, 55000), thres=0, avg_cnt=0),
+            DummyBinnedAcquisitionData(data=(60000, 65000), thres=0, avg_cnt=0),
+        ],
+    )
+
+    # Generate compiled schedule
+    compiler = SerialCompiler(name="compiler")
+    compiled_sched = compiler.compile(
+        schedule=schedule, config=quantum_device.generate_compilation_config()
+    )
+
+    # Upload schedule and run experiment
+    instr_coordinator.prepare(compiled_sched)
+    instr_coordinator.start()
+
+    with pytest.warns(
+        FutureWarning,
+        match="The format of acquisition data of looped measurements in APPEND mode will change in quantify-scheduler>=0.18.0",
+    ):
+        data = instr_coordinator.retrieve_acquisition()
+
+    instr_coordinator.stop()
+
+    # Assert intended behaviour
+    assert isinstance(data, Dataset)
+    expected_dataset = Dataset(
+        {
+            0: DataArray(
+                [[2 + 3j, 4 + 5j, 6 + 7j], [8 + 9j, 10 + 11j, 12 + 13j]],
+                coords=None,
+                dims=["repetition", "loop_repetition"],
             ),
         }
     )

@@ -24,19 +24,19 @@ lru_cache = functools.lru_cache(maxsize=200)
 
 
 def validate_json(data, schema):
-    """Validate schema using jsonschema-rs"""
+    """Validate schema using jsonschema-rs."""
     return fastjsonschema.validate(schema, data)
 
 
 def load_json_schema(relative_to: Union[str, pathlib.Path], filename: str):
     """
     Load a JSON schema from file. Expects a 'schemas' directory in the same directory
-    as `relative_to`.
+    as ``relative_to``.
 
     .. tip::
 
         Typical usage of the form
-        `schema = load_json_schema(__file__, 'definition.json')`
+        ``schema = load_json_schema(__file__, 'definition.json')``
 
     Parameters
     ----------
@@ -44,6 +44,7 @@ def load_json_schema(relative_to: Union[str, pathlib.Path], filename: str):
         the file to begin searching from
     filename
         the JSON file to load
+
     Returns
     -------
     dict
@@ -60,7 +61,7 @@ def load_json_validator(
 ) -> Callable:
     """
     Load a JSON validator from file. Expects a 'schemas' directory in the same directory
-    as `relative_to`.
+    as ``relative_to``.
 
 
     Parameters
@@ -69,6 +70,7 @@ def load_json_validator(
         the file to begin searching from
     filename
         the JSON file to load
+
     Returns
     -------
     Callable
@@ -89,7 +91,8 @@ class JSONSchemaValMixin:  # pylint: disable=too-few-public-methods
 
     @classmethod
     def is_valid(cls, object_to_be_validated) -> bool:
-        """Checks if the object is valid according to its schema
+        """
+        Checks if the object is valid according to its schema.
 
         Raises
         ------
@@ -101,48 +104,44 @@ class JSONSchemaValMixin:  # pylint: disable=too-few-public-methods
         :
 
         """
-
         validator_method = load_json_validator(__file__, cls.schema_filename)
         validator_method(object_to_be_validated.data)
         return True  # if no exception was raised during validation
 
 
-class ScheduleJSONDecoder(json.JSONDecoder):
+class SchedulerJSONDecoder(json.JSONDecoder):
     """
-    The Quantify Schedule JSONDecoder.
+    The Quantify Scheduler JSONDecoder.
 
-    The ScheduleJSONDecoder is used to convert a string with JSON content into a
-    :class:`quantify_scheduler.schedules.schedule.Schedule`.
+    The SchedulerJSONDecoder is used to convert a string with JSON content into
+    instances of classes in quantify-scheduler.
 
     To avoid the execution of malicious code ScheduleJSONDecoder uses
     :func:`ast.literal_eval` instead of :func:`eval` to convert the data to an instance
     of Schedule.
-    """
+
+    The list of serializable classes can be extended with custom classes by
+    providing the ``modules`` keyword argument. These classes have to implement
+    :class:`quantify_scheduler.operations.operation.Operation` and overload the
+    :code:`__str__` and :code:`__repr__` methods in order to serialize and
+    deserialize domain objects into a valid JSON-format.
+
+    Keyword Arguments
+    -----------------
+    modules : List[ModuleType], *optional*
+        A list of custom modules containing serializable classes, by default []
+    """  # noqa: D416
 
     classes: Dict[str, Type[Any]]
 
     def __init__(self, *args, **kwargs) -> None:
-        """
-        Create new instance of ScheduleJSONDecoder to decode a string into a Schedule.
-
-        The list of serializable classes can be extended with custom classes by
-        providing the `modules` keyword argument. These classes have to implement
-        :class:`quantify_scheduler.operations.operation.Operation` and overload the
-        :code:`__str__` and :code:`__repr__` methods in order to serialize and
-        deserialize domain objects into a valid JSON-format.
-
-        Keyword Arguments
-        -----------------
-        modules : List[ModuleType], *optional*
-            A list of custom modules containing serializable classes, by default []
-        """
         extended_modules: List[ModuleType] = kwargs.pop("modules", [])
         invalid_modules = list(
             filter(lambda o: not isinstance(o, ModuleType), extended_modules)
         )
         if invalid_modules:
             raise ValueError(
-                f"Attempting to create a Schedule decoder class ScheduleJSONDecoder. "
+                f"Attempting to create a Schedule decoder class SchedulerJSONDecoder. "
                 f"The following modules provided are not an instance of the ModuleType:"
                 f" {invalid_modules} ."
             )
@@ -157,6 +156,16 @@ class ScheduleJSONDecoder(json.JSONDecoder):
         # 'quantify_scheduler')
         # pylint: disable=import-outside-toplevel
         from quantify_scheduler import resources
+        from quantify_scheduler.backends.qblox.operations.pulse_library import (
+            VoltageOffset as QbloxVoltageOffset,
+        )
+        from quantify_scheduler.backends.qblox.operations.stitched_pulse import (
+            StitchedPulse as QbloxStitchedPulse,
+        )
+        from quantify_scheduler.device_under_test.quantum_device import QuantumDevice
+        from quantify_scheduler.device_under_test.composite_square_edge import (
+            CompositeSquareEdge,
+        )
         from quantify_scheduler.schedules.schedule import (
             AcquisitionMetadata,
             Schedulable,
@@ -183,7 +192,20 @@ class ScheduleJSONDecoder(json.JSONDecoder):
             resources,
         ] + extended_modules
         self.classes = inspect_helpers.get_classes(*self._modules)
-        self.classes.update({c.__name__: c for c in [AcquisitionMetadata, Schedulable]})
+        self.classes.update(
+            {
+                c.__name__: c
+                for c in [
+                    AcquisitionMetadata,
+                    Schedulable,
+                    QuantumDevice,
+                    CompositeSquareEdge,
+                ]
+            }
+        )
+        self.classes.update(
+            {"VoltageOffset": QbloxVoltageOffset, "StitchedPulse": QbloxStitchedPulse}
+        )
         self.classes.update(
             {
                 t.__name__: t
@@ -241,7 +263,7 @@ class ScheduleJSONDecoder(json.JSONDecoder):
 
     def custom_object_hook(self, obj: object) -> object:
         """
-        The `object_hook` hook will be called with the result of every JSON object
+        The ``object_hook`` hook will be called with the result of every JSON object
         decoded and its return value will be used in place of the given ``dict``.
 
         Parameters
@@ -259,9 +281,9 @@ class ScheduleJSONDecoder(json.JSONDecoder):
         return obj
 
 
-class ScheduleJSONEncoder(json.JSONEncoder):
+class SchedulerJSONEncoder(json.JSONEncoder):
     """
-    Custom JSONEncoder which encodes the quantify Schedule into a JSON file format
+    Custom JSONEncoder which encodes a Quantify Scheduler object into a JSON file format
     string.
     """
 
@@ -270,7 +292,7 @@ class ScheduleJSONEncoder(json.JSONEncoder):
         Overloads the json.JSONEncoder default method that returns a serializable
         object. It will try 3 different serialization methods which are, in order,
         check if the object is to be serialized to a string using repr. If not, try
-        to use `__getstate__`. Finally, try to serialize the `__dict__` property.
+        to use ``__getstate__``. Finally, try to serialize the ``__dict__`` property.
         """
         if hasattr(o, "__getstate__"):
             return o.__getstate__()

@@ -1,5 +1,25 @@
 # Recent interface changes
 
+## 0.18.0: 
+
+- Compilation 
+  - The `backend` field in the `HardwareCompilationConfig` was replaced by the `config_type` field, which contains a (string) reference to the backend-specific `HardwareCompilationConfig` datastructure.
+  - The `backend` field was removed from the `DeviceCompilationConfig`.
+  - The `compilation_passes` field was moved from the `SerialCompilationConfig` into the `DeviceCompilationConfig` and `HardwareCompilationConfig` datastructures.
+  - How to migrate:
+    - `DeviceCompilationConfig`: If you are loading a stored `DeviceCompilationConfig` (instead of relying on the device config generation of the `QuantumDevice`), remove the `"backend"` key.
+    - `HardwareCompilationConfig`: If you are already using the new-style `HardwareCompilationConfig`, change the `"backend"` key to `"config_type"`:
+      -  `"config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig"`
+
+- Schedulables 
+  - Rename `Schedulable["operation_repr"]` to `Schedulable["operation_id"]`
+
+- InstrumentCoordinator 
+  - Arming the sequencers is now done via `InstrumentCoordinator.start()` instead of `InstrumentCoordinator.prepare()`.
+
+- Pulses 
+  - The phase argument for `SquarePulse` has been removed.
+
 ## 0.15.0: HardwareCompilationConfig structure
 
 The {class}`~.backends.types.common.HardwareCompilationConfig` datastructure was introduced to structure the information that was previously stored in the hardware configuration dict.
@@ -8,7 +28,7 @@ For more information, see {ref}`sec-hardware-compilation-config` and {ref}`Clust
 
 ## 0.13.0: Long waveform support
 
-The {code}`instruction_generated_pulses_enabled` option is deprecated and will be removed in a future version. Long square pulses, staircase pulses and long ramps can be generated with the newly introduced helper functions {class}`~quantify_scheduler.operations.pulse_factories.long_square_pulse`, {class}`~quantify_scheduler.operations.pulse_factories.staircase_pulse` and {class}`~quantify_scheduler.operations.pulse_factories.long_ramp_pulse`. More complex long waveforms can now also be created from the {class}`~quantify_scheduler.operations.stitched_pulse.StitchedPulseBuilder`, which generates a {class}`~quantify_scheduler.operations.stitched_pulse.StitchedPulse`. For more information, see {ref}`Long waveform support <sec-qblox-cluster-long-waveform-support>`.
+The {code}`instruction_generated_pulses_enabled` option is deprecated and will be removed in a future version. Long square pulses, staircase pulses and long ramps can be generated with the newly introduced helper functions {class}`~quantify_scheduler.backends.qblox.operations.pulse_factories.long_square_pulse`, {class}`~quantify_scheduler.backends.qblox.operations.pulse_factories.staircase_pulse` and {class}`~quantify_scheduler.backends.qblox.operations.pulse_factories.long_ramp_pulse`. More complex long waveforms can now also be created from the {class}`~quantify_scheduler.backends.qblox.operations.stitched_pulse.StitchedPulseBuilder`, which generates a {class}`~quantify_scheduler.backends.qblox.operations.stitched_pulse.StitchedPulse`. For more information, see {ref}`Long waveform support <sec-long-waveforms-via-stitchedpulse>`.
 
 ## 0.12.0: Marker behavior for RF modules; Custom Qblox downconverter
 

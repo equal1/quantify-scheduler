@@ -10,7 +10,11 @@ import pytest
 
 from quantify_scheduler import Operation, Schedule
 from quantify_scheduler.backends import SerialCompiler
-from quantify_scheduler.json_utils import ScheduleJSONDecoder, ScheduleJSONEncoder
+from quantify_scheduler.backends.qblox.operations import VoltageOffset
+from quantify_scheduler.backends.qblox.operations.pulse_factories import (
+    long_square_pulse,
+)
+from quantify_scheduler.json_utils import SchedulerJSONDecoder, SchedulerJSONEncoder
 from quantify_scheduler.operations.gate_library import X90, X
 from quantify_scheduler.operations.pulse_library import (
     ChirpPulse,
@@ -27,7 +31,6 @@ from quantify_scheduler.operations.pulse_library import (
     SquarePulse,
     StaircasePulse,
     SuddenNetZeroPulse,
-    VoltageOffset,
     create_dc_compensation_pulse,
     decompose_long_square_pulse,
 )
@@ -239,9 +242,8 @@ def test_decompose_long_square_pulse() -> None:
                 clock="qe0.spec",
             ),
             VoltageOffset(
-                offset_path_0=0.5,
-                offset_path_1=0.1,
-                duration=duration,
+                offset_path_I=0.5,
+                offset_path_Q=0.1,
                 port=port,
                 clock=clock,
             ),
@@ -254,10 +256,10 @@ def test_decompose_long_square_pulse() -> None:
 class TestPulseLevelOperation:
     def test__repr__(self, operation: Operation) -> None:
         # Arrange
-        operation_state: str = json.dumps(operation, cls=ScheduleJSONEncoder)
+        operation_state: str = json.dumps(operation, cls=SchedulerJSONEncoder)
 
         # Act
-        obj = json.loads(operation_state, cls=ScheduleJSONDecoder)
+        obj = json.loads(operation_state, cls=SchedulerJSONDecoder)
         assert obj == operation
 
     def test__str__(self, operation: Operation) -> None:
@@ -268,7 +270,10 @@ class TestPulseLevelOperation:
 
     def test_duration(self, operation: Operation) -> None:
         pulse_info = operation.data["pulse_info"][0]
-        if operation.__class__ is ResetClockPhase:
+        if (
+            operation.__class__ is ResetClockPhase
+            or operation.__class__ is VoltageOffset
+        ):
             assert operation.duration == 0, operation
         elif operation.__class__ in [SetClockFrequency, ShiftClockPhase]:
             assert operation.duration == 8e-9, operation
@@ -289,20 +294,20 @@ class TestPulseLevelOperation:
 
     def test_deserialize(self, operation: Operation) -> None:
         # Arrange
-        operation_state: str = json.dumps(operation, cls=ScheduleJSONEncoder)
+        operation_state: str = json.dumps(operation, cls=SchedulerJSONEncoder)
 
         # Act
-        obj = json.loads(operation_state, cls=ScheduleJSONDecoder)
+        obj = json.loads(operation_state, cls=SchedulerJSONDecoder)
 
         # Assert
         TestCase().assertDictEqual(obj.data, operation.data)
 
     def test__repr__modify_not_equal(self, operation: Operation) -> None:
         # Arrange
-        operation_state: str = json.dumps(operation, cls=ScheduleJSONEncoder)
+        operation_state: str = json.dumps(operation, cls=SchedulerJSONEncoder)
 
         # Act
-        obj = json.loads(operation_state, cls=ScheduleJSONDecoder)
+        obj = json.loads(operation_state, cls=SchedulerJSONDecoder)
         assert obj == operation
 
         # Act
@@ -310,6 +315,49 @@ class TestPulseLevelOperation:
 
         # Assert
         assert obj != operation
+
+
+def test_deprecated_path_args_voltage_offset():
+    with pytest.warns(FutureWarning, match="0.20.0"):
+        VoltageOffset(  # pylint: disable=no-value-for-parameter
+            offset_path_0=0.5,
+            offset_path_1=0.1,
+            port="port",
+            clock="clock",
+        )
+    with pytest.raises(TypeError, match="0.20.0"):
+        VoltageOffset(
+            offset_path_0=0.5,
+            offset_path_1=0.1,
+            offset_path_I=0.5,
+            offset_path_Q=0.1,
+            port="port",
+            clock="clock",
+        )
+
+
+def test_complex_square_pulse(mock_setup_basic_transmon_with_standard_params):
+    pulse0 = SquarePulse(
+        amp=1 + 1j,
+        duration=1e-8,
+        port="q0:fl",
+        clock=BasebandClockResource.IDENTITY,
+    )
+
+    assert pulse0["pulse_info"][0]["amp"] == 1 + 1j
+
+    pulse1 = long_square_pulse(
+        amp=1 + 1j,
+        duration=1.2e-8,
+        port="q0:fl",
+        clock=BasebandClockResource.IDENTITY,
+    )
+
+    assert pulse1["pulse_info"][0]["amp"] == 1 + 1j
+    assert pulse1["pulse_info"][1]["offset_path_I"] == 1
+    assert pulse1["pulse_info"][1]["offset_path_Q"] == 1
+    assert pulse1["pulse_info"][2]["offset_path_I"] == 0
+    assert pulse1["pulse_info"][2]["offset_path_Q"] == 0
 
 
 def test_dc_compensation_pulse_amp() -> None:

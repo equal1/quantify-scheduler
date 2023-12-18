@@ -33,12 +33,12 @@ from quantify_core.data.handling import gen_tuid, get_datadir
 from quantify_scheduler.backends.qblox import (
     constants,
     driver_version_check,
-    enums,
     helpers,
     instrument_compilers,
     q1asm_instructions,
     register_manager,
 )
+from quantify_scheduler.backends.qblox.enums import ChannelMode
 from quantify_scheduler.backends.qblox.operation_handling.acquisitions import (
     AcquisitionStrategyPartial,
 )
@@ -72,13 +72,34 @@ logger.setLevel(logging.WARNING)
 
 class InstrumentCompiler(ABC):
     """
-    Abstract base class that defines a generic instrument compiler. The subclasses that
-    inherit from this are meant to implement the compilation steps needed to compile the
-    lists of :class:`quantify_scheduler.backends.types.qblox.OpInfo` representing the
+    Abstract base class that defines a generic instrument compiler.
+
+    The subclasses that inherit from this are meant to implement the compilation
+    steps needed to compile the lists of
+    :class:`quantify_scheduler.backends.types.qblox.OpInfo` representing the
     pulse and acquisition information to device-specific instructions.
 
-    Each device that needs to be part of the compilation process requires an associated
-    `InstrumentCompiler`.
+    Each device that needs to be part of the compilation process requires an
+    associated ``InstrumentCompiler``.
+
+    Parameters
+    ----------
+    parent: :class:`~quantify_scheduler.backends.qblox.compiler_container.CompilerContainer`
+        Reference to the parent object.
+    name
+        Name of the `QCoDeS` instrument this compiler object corresponds to.
+    total_play_time
+        Total time execution of the schedule should go on for. This parameter is
+        used to ensure that the different devices, potentially with different clock
+        rates, can work in a synchronized way when performing multiple executions of
+        the schedule.
+    instrument_cfg
+        The part of the hardware configuration dictionary referring to this device. This is one
+        of the inner dictionaries of the overall hardware config.
+    latency_corrections
+        Dict containing the delays for each port-clock combination. This is specified in
+        the top layer of hardware config.
+
     """
 
     def __init__(
@@ -89,29 +110,6 @@ class InstrumentCompiler(ABC):
         instrument_cfg: Dict[str, Any],
         latency_corrections: Optional[Dict[str, float]] = None,
     ):
-        # pylint: disable=line-too-long
-        """
-        Constructor for an InstrumentCompiler object.
-
-        Parameters
-        ----------
-        parent: :class:`~quantify_scheduler.backends.qblox.compiler_container.CompilerContainer`
-            Reference to the parent object.
-        name
-            Name of the `QCoDeS` instrument this compiler object corresponds to.
-        total_play_time
-            Total time execution of the schedule should go on for. This parameter is
-            used to ensure that the different devices, potentially with different clock
-            rates, can work in a synchronized way when performing multiple executions of
-            the schedule.
-        instrument_cfg
-            The part of the hardware configuration dictionary referring to this device. This is one
-            of the inner dictionaries of the overall hardware config.
-        latency_corrections
-            Dict containing the delays for each port-clock combination. This is specified in
-            the top layer of hardware config.
-
-        """
         self.parent = parent
         self.name = name
         self.total_play_time = total_play_time
@@ -151,8 +149,25 @@ class InstrumentCompiler(ABC):
 
 class ControlDeviceCompiler(InstrumentCompiler, metaclass=ABCMeta):
     """
-    Abstract class for any device requiring logic for acquisition and playback of
-    pulses.
+    Abstract class for devices requiring logic for acquisition and playback of pulses.
+
+    Parameters
+    ----------
+    parent: :class:`~quantify_scheduler.backends.qblox.compiler_container.CompilerContainer`
+        Reference to the parent object.
+    name
+        Name of the `QCoDeS` instrument this compiler object corresponds to.
+    total_play_time
+        Total time execution of the schedule should go on for. This parameter is
+        used to ensure that the different devices, potentially with different clock
+        rates, can work in a synchronized way when performing multiple executions of
+        the schedule.
+    instrument_cfg
+        The part of the hardware configuration dictionary referring to this device. This is one
+        of the inner dictionaries of the overall hardware config.
+    latency_corrections
+        Dict containing the delays for each port-clock combination. This is specified in
+        the top layer of hardware config.
     """
 
     def __init__(
@@ -163,28 +178,6 @@ class ControlDeviceCompiler(InstrumentCompiler, metaclass=ABCMeta):
         instrument_cfg: Dict[str, Any],
         latency_corrections: Optional[Dict[str, float]] = None,
     ):
-        # pylint: disable=line-too-long
-        """
-        Constructor for a ControlDeviceCompiler object.
-
-        Parameters
-        ----------
-        parent: :class:`~quantify_scheduler.backends.qblox.compiler_container.CompilerContainer`
-            Reference to the parent object.
-        name
-            Name of the `QCoDeS` instrument this compiler object corresponds to.
-        total_play_time
-            Total time execution of the schedule should go on for. This parameter is
-            used to ensure that the different devices, potentially with different clock
-            rates, can work in a synchronized way when performing multiple executions of
-            the schedule.
-        instrument_cfg
-            The part of the hardware configuration dictionary referring to this device. This is one
-            of the inner dictionaries of the overall hardware config.
-        latency_corrections
-            Dict containing the delays for each port-clock combination. This is specified in
-            the top layer of hardware config.
-        """
         super().__init__(
             parent=parent,
             name=name,
@@ -237,7 +230,6 @@ class ControlDeviceCompiler(InstrumentCompiler, metaclass=ABCMeta):
             Data structure containing all the information regarding this specific
             acquisition operation.
         """
-
         if not self.supports_acquisition:
             raise RuntimeError(
                 f"{self.__class__.__name__} {self.name} does not support acquisitions. "
@@ -305,6 +297,37 @@ class ControlDeviceCompiler(InstrumentCompiler, metaclass=ABCMeta):
 class Sequencer:
     """
     Class that performs the compilation steps on the sequencer level.
+
+    Parameters
+    ----------
+    parent
+        A reference to the parent instrument this sequencer belongs to.
+    index
+        Index of the sequencer.
+    portclock
+        Tuple that specifies the unique port and clock combination for this
+        sequencer. The first value is the port, second is the clock.
+    channel_name
+        Specifies the channel identifier of the hardware config (e.g. ``complex_output_0``).
+    sequencer_cfg
+        Sequencer settings dictionary.
+    latency_corrections
+        Dict containing the delays for each port-clock combination.
+    lo_name
+        The name of the local oscillator instrument connected to the same output via
+        an IQ mixer. This is used for frequency calculations.
+    downconverter_freq
+        .. warning::
+            Using ``downconverter_freq`` requires custom Qblox hardware, do not use otherwise.
+
+        Frequency of the external downconverter if one is being used.
+        Defaults to ``None``, in which case the downconverter is inactive.
+    mix_lo
+        Boolean flag for IQ mixing with LO.
+        Defaults to ``True`` meaning IQ mixing is applied.
+    marker_debug_mode_enable
+        Boolean flag to indicate if markers should be pulled high at the start of operations.
+        Defaults to False, which means the markers will not be used during the sequence.
     """
 
     # pylint: disable=too-many-arguments
@@ -314,59 +337,14 @@ class Sequencer:
         index: int,
         portclock: Tuple[str, str],
         static_hw_properties: StaticHardwareProperties,
-        io_name: str,
-        connected_outputs: Optional[Union[Tuple[int], Tuple[int, int]]],
-        connected_inputs: Optional[Union[Tuple[int], Tuple[int, int]]],
-        io_mode: enums.IoMode,
+        channel_name: str,
         sequencer_cfg: Dict[str, Any],
         latency_corrections: Dict[str, float],
         lo_name: Optional[str] = None,
         downconverter_freq: Optional[float] = None,
         mix_lo: bool = True,
         marker_debug_mode_enable: bool = False,
-        default_marker: int = 0,
     ):
-        """
-        Constructor for the sequencer compiler.
-
-        Parameters
-        ----------
-        parent
-            A reference to the parent instrument this sequencer belongs to.
-        index
-            Index of the sequencer.
-        portclock
-            Tuple that specifies the unique port and clock combination for this
-            sequencer. The first value is the port, second is the clock.
-        io_name
-            Specifies the io identifier of the hardware config (e.g. `complex_output_0`).
-        connected_outputs
-            The outputs connected to the sequencer.
-        connected_inputs
-            The inputs connected to the sequencer.
-        sequencer_cfg
-            Sequencer settings dictionary.
-        latency_corrections
-            Dict containing the delays for each port-clock combination.
-        lo_name
-            The name of the local oscillator instrument connected to the same output via
-            an IQ mixer. This is used for frequency calculations.
-        downconverter_freq
-            .. warning::
-                Using `downconverter_freq` requires custom Qblox hardware, do not use otherwise.
-
-            Frequency of the external downconverter if one is being used.
-            Defaults to ``None``, in which case the downconverter is inactive.
-        mix_lo
-            Boolean flag for IQ mixing with LO.
-            Defaults to ``True`` meaning IQ mixing is applied.
-        marker_debug_mode_enable
-            Boolean flag to indicate if markers should be pulled high at the start of operations.
-            Defaults to False, which means the markers will not be used during the sequence.
-        default_marker
-            The default marker value to use, will be set in the beginning of program.
-            Especially important for RF where the set_mrk command is used to enable/disable the RF path.
-        """
         self.parent = parent
         self.index = index
         self.port = portclock[0]
@@ -377,7 +355,6 @@ class Sequencer:
         self.downconverter_freq: float = downconverter_freq
         self.mix_lo: bool = mix_lo
         self._marker_debug_mode_enable: bool = marker_debug_mode_enable
-        self.default_marker = default_marker
         self._num_acquisitions = 0
 
         self.static_hw_properties: StaticHardwareProperties = static_hw_properties
@@ -386,10 +363,19 @@ class Sequencer:
 
         self._settings = SequencerSettings.initialize_from_config_dict(
             sequencer_cfg=sequencer_cfg,
-            io_name=io_name,
-            connected_outputs=connected_outputs,
-            connected_inputs=connected_inputs,
-            io_mode=io_mode,
+            channel_name=channel_name,
+            connected_output_indices=self.static_hw_properties._get_connected_output_indices(
+                channel_name
+            ),
+            connected_input_indices=self.static_hw_properties._get_connected_input_indices(
+                channel_name
+            ),
+        )
+
+        self._default_marker = (
+            self.static_hw_properties.channel_name_to_digital_marker.get(
+                channel_name, self.static_hw_properties.default_marker
+            )
         )
 
         self.qasm_hook_func: Optional[Callable] = sequencer_cfg.get(
@@ -403,42 +389,33 @@ class Sequencer:
         """Latency correction accounted for by delaying the start of the program."""
 
     @property
-    def connected_outputs(self) -> Optional[Union[Tuple[int], Tuple[int, int]]]:
+    def connected_output_indices(self) -> Optional[Union[Tuple[int], Tuple[int, int]]]:
         """
-        The indices of the output paths that this sequencer is producing awg
-        data for.
+        Return the connected output indices associated with the output name
+        specified in the hardware config.
 
-        For the baseband modules, these indices correspond directly to a physical output
-        (e.g. index 0 corresponds to output 1 etc.).
+        For the baseband modules, output index 'n' corresponds to physical module
+        output 'n+1'.
 
-        For the RF modules, indexes 0 and 1 correspond to path0 and path1 of output 1,
-        respectively, while indexes 2 and 3 correspond to path0 and path1 of output 2.
+        For RF modules, output indices '0' and '1' (or: '2' and '3') correspond to
+        'path_I' and 'path_Q' of some sequencer, and both these paths are routed to the
+        **same** physical module output '1' (or: '2').
         """
-        return self._settings.connected_outputs
+        return self._settings.connected_output_indices
 
     @property
-    def connected_inputs(self) -> Optional[Union[Tuple[int], Tuple[int, int]]]:
+    def connected_input_indices(self) -> Optional[Union[Tuple[int], Tuple[int, int]]]:
         """
-        The indices of the input paths that this sequencer is collecting
-        data for.
+        Return the connected input indices associated with the input name specified
+        in the hardware config.
 
-        For the baseband modules, these indices correspond directly to a physical input
-        (e.g. index 0 corresponds to output 1 etc.).
+        For the baseband modules, input index 'n' corresponds to physical module input
+        'n+1'.
 
-        For the RF modules, indexes 0 and 1 correspond to path0 and path1 of input 1.
+        For RF modules, input indices '0' and '1' correspond to 'path_I' and 'path_Q' of
+        some sequencer, and both paths are connected to physical module input '1'.
         """
-        return self._settings.connected_inputs
-
-    @property
-    def io_mode(self) -> enums.IoMode:
-        """
-        Return :class:`.enums.IoMode` used by this sequencer.
-
-        If :attr:`.enums.IoMode.REAL` or :attr:`.enums.IoMode.IMAG`, the sequencer is restricted to only using real-valued data.
-        If :attr:`.enums.IoMode.COMPLEX`, the sequencer may also use complex data.
-        If :attr:`.enums.IoMode.DIGITAL`, the sequencer is restricted to only producing :class:`~.quantify_scheduler.operations.pulse_library.MarkerPulse` s.
-        """
-        return self._settings.io_mode
+        return self._settings.connected_input_indices
 
     @property
     def portclock(self) -> Tuple[str, str]:
@@ -652,14 +629,16 @@ class Sequencer:
             self._settings.ttl_acq_auto_bin_incr_en = (
                 acq_metadata.bin_mode == BinMode.AVERAGE
             )
-            if self.connected_inputs is not None:
-                if len(self.connected_inputs) == 1:
-                    self._settings.ttl_acq_input_select = self.connected_inputs[0]
+            if self.connected_input_indices is not None:
+                if len(self.connected_input_indices) == 1:
+                    self._settings.ttl_acq_input_select = self.connected_input_indices[
+                        0
+                    ]
                 else:
                     raise ValueError(
                         f"Please make sure you use a single real input for this "
                         f"portclock combination. "
-                        f"Found: {len(self.connected_inputs)} connected. "
+                        f"Found: {len(self.connected_input_indices)} connected. "
                         f"TTL acquisition does not support multiple inputs."
                         f"Problem occurred for port {self.port} with"
                         f"clock {self.clock}, which corresponds to {self.name} of "
@@ -715,7 +694,12 @@ class Sequencer:
 
         # initialize an empty dictionary for the format required by module
         acq_declaration_dict = {}
-        for acq_channel, acq_indices in acq_metadata.acq_indices.items():
+        for (
+            qblox_acq_index,
+            acq_channel_metadata,
+        ) in acq_metadata.acq_channels_metadata.items():
+            acq_indices: list[int] = acq_channel_metadata.acq_indices
+            acq_channel: Hashable = acq_channel_metadata.acq_channel
             # Some sanity checks on the input for easier debugging.
             if min(acq_indices) != 0:
                 raise ValueError(
@@ -758,16 +742,9 @@ class Sequencer:
                 # this check exists to catch unexpected errors if we add more
                 # BinModes in the future.
                 raise NotImplementedError(f"Unknown bin mode {acq_metadata.bin_mode}.")
-            if acq_metadata.acq_protocol == "looped_periodic_acquisition":
-                if len(acquisition_infos) > 1:
-                    raise ValueError(
-                        "only one acquisition allowed if "
-                        "looped_periodic_acquisition is used"
-                    )
-                num_bins = acquisition_infos[0].data["num_times"]
-            acq_declaration_dict[str(acq_channel)] = {
+            acq_declaration_dict[str(qblox_acq_index)] = {
                 "num_bins": num_bins,
-                "index": acq_channel,
+                "index": qblox_acq_index,
             }
 
         return acq_declaration_dict
@@ -826,16 +803,27 @@ class Sequencer:
         Raises
         ------
         RuntimeError
-            Upon `total_sequence_time` exceeding :attr:`.QASMProgram.elapsed_time`.
+            Upon ``total_sequence_time`` exceeding :attr:`.QASMProgram.elapsed_time`.
         """
         loop_label = "start"
 
+        if self.parent.supports_acquisition and len(self.acquisitions) != 0:
+            acquisition_infos: List[OpInfo] = [
+                acq.operation_info for acq in self.acquisitions
+            ]
+            acq_metadata = helpers.extract_acquisition_metadata_from_acquisitions(
+                acquisitions=acquisition_infos, repetitions=repetitions
+            )
+        else:
+            acq_metadata = None
         qasm = QASMProgram(
             static_hw_properties=self.static_hw_properties,
             register_manager=self.register_manager,
             align_fields=align_qasm_fields,
+            acq_metadata=acq_metadata,
         )
-        qasm.set_marker(self.default_marker)
+        qasm.set_marker(self._default_marker)
+
         # program header
         qasm.emit(q1asm_instructions.WAIT_SYNC, constants.GRID_TIME)
         qasm.emit(q1asm_instructions.UPDATE_PARAMETERS, constants.GRID_TIME)
@@ -938,7 +926,7 @@ class Sequencer:
         qasm: QASMProgram,
         acquisition_multiplier: int,
     ) -> bool:
-        """Handle control flow and insert Q1ASM"""
+        """Handle control flow and insert Q1ASM."""
         while (operation := next(operations_iter, None)) is not None:
             qasm.wait_till_start_operation(operation.operation_info)
             if isinstance(operation, LoopStrategy):
@@ -968,7 +956,7 @@ class Sequencer:
             if valid_operation:
                 qasm.set_marker(self._decide_markers(operation))
                 operation.insert_qasm(qasm)
-                qasm.set_marker(self.default_marker)
+                qasm.set_marker(self._default_marker)
                 qasm.emit(q1asm_instructions.UPDATE_PARAMETERS, constants.GRID_TIME)
                 qasm.elapsed_time += constants.GRID_TIME
         else:
@@ -1043,10 +1031,13 @@ class Sequencer:
             The compiled QASM program as a string.
         waveforms_dict
             The dictionary containing all the awg data and indices. This is expected to
-            be of the form generated by the `generate_awg_dict` method.
+            be of the form generated by the ``generate_awg_dict`` method.
         weights_dict
             The dictionary containing all the acq data and indices. This is expected to
-            be of the form generated by the `generate_acq_dict` method.
+            be of the form generated by the ``generate_acq_dict`` method.
+        acq_decl_dict
+            The dictionary containing all the acq declarations. This is expected to be
+            of the form generated by the ``generate_acq_decl_dict`` method.
 
         Returns
         -------
@@ -1187,11 +1178,10 @@ class Sequencer:
         -------
             A bit string passed on to the set_mrk function of the Q1ASM object.
         """
-
         marker_bit_string = 0
         instrument_type = self.static_hw_properties.instrument_type
         if instrument_type == "QCM":
-            for output in self.connected_outputs:
+            for output in self.connected_output_indices:
                 marker_bit_string |= 1 << output
         elif instrument_type == "QRM":
             if operation.operation_info.is_acquisition:
@@ -1202,9 +1192,9 @@ class Sequencer:
         # For RF modules, the first two indices correspond to path enable/disable.
         # Therefore, the index of the output is shifted by 2.
         elif instrument_type == "QCM-RF":
-            for output in self.connected_outputs:
+            for output in self.connected_output_indices:
                 marker_bit_string |= 1 << (output + 2)
-                marker_bit_string |= self.default_marker
+                marker_bit_string |= self._default_marker
         elif instrument_type == "QRM-RF":
             if operation.operation_info.is_acquisition:
                 marker_bit_string = 0b1011
@@ -1222,6 +1212,25 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
     different devices are defined in subclasses.
     Effectively, this base class contains the functionality shared by all Qblox
     devices and serves to avoid repeated code between them.
+
+
+    Parameters
+    ----------
+    parent: :class:`quantify_scheduler.backends.qblox.compiler_container.CompilerContainer`
+        Reference to the parent object.
+    name
+        Name of the `QCoDeS` instrument this compiler object corresponds to.
+    total_play_time
+        Total time execution of the schedule should go on for. This parameter is
+        used to ensure that the different devices, potentially with different clock
+        rates, can work in a synchronized way when performing multiple executions of
+        the schedule.
+    instrument_cfg
+        The part of the hardware configuration dictionary referring to this device. This is one
+        of the inner dictionaries of the overall hardware config.
+    latency_corrections
+        Dict containing the delays for each port-clock combination. This is specified in
+        the top layer of hardware config.
     """
 
     def __init__(
@@ -1232,28 +1241,6 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
         instrument_cfg: Dict[str, Any],
         latency_corrections: Optional[Dict[str, float]] = None,
     ):
-        # pylint: disable=line-too-long
-        """
-        Constructor function.
-
-        Parameters
-        ----------
-        parent: :class:`quantify_scheduler.backends.qblox.compiler_container.CompilerContainer`
-            Reference to the parent object.
-        name
-            Name of the `QCoDeS` instrument this compiler object corresponds to.
-        total_play_time
-            Total time execution of the schedule should go on for. This parameter is
-            used to ensure that the different devices, potentially with different clock
-            rates, can work in a synchronized way when performing multiple executions of
-            the schedule.
-        instrument_cfg
-            The part of the hardware configuration dictionary referring to this device. This is one
-            of the inner dictionaries of the overall hardware config.
-        latency_corrections
-            Dict containing the delays for each port-clock combination. This is specified in
-            the top layer of hardware config.
-        """
         super().__init__(
             parent=parent,
             name=name,
@@ -1274,19 +1261,18 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
     @property
     def portclocks(self) -> List[Tuple[str, str]]:
         """Returns all the port-clock combinations that this device can target."""
-
         portclocks = []
 
-        for io_name in self.static_hw_properties.valid_ios:
-            if io_name not in self.instrument_cfg:
+        for channel_name in self.static_hw_properties.valid_channels:
+            if channel_name not in self.instrument_cfg:
                 continue
 
-            portclock_configs = self.instrument_cfg[io_name].get(
+            portclock_configs = self.instrument_cfg[channel_name].get(
                 "portclock_configs", []
             )
             if not portclock_configs:
                 raise KeyError(
-                    f"No 'portclock_configs' entry found in '{io_name}' of {self.name}."
+                    f"No 'portclock_configs' entry found in '{channel_name}' of {self.name}."
                 )
 
             portclocks += [
@@ -1298,9 +1284,7 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
     @property
     @abstractmethod
     def settings_type(self) -> PulsarSettings:
-        """
-        Specifies the PulsarSettings class used by the instrument.
-        """
+        """Specifies the PulsarSettings class used by the instrument."""
 
     @property
     @abstractmethod
@@ -1312,7 +1296,7 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
 
     def _construct_sequencers(self):
         """
-        Constructs `Sequencer` objects for each port and clock combination
+        Constructs :class:`~Sequencer` objects for each port and clock combination
         belonging to this device.
 
         Raises
@@ -1330,81 +1314,71 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
             Attempting to use more sequencers than available.
 
         """
-
         # Setup each sequencer.
         sequencers: Dict[str, Sequencer] = {}
-        portclock_io_map: Dict[Tuple, str] = {}
-        default_marker = self.static_hw_properties.default_marker
+        portclock_to_channel: Dict[Tuple, str] = {}
 
-        for io_name, io_cfg in self.instrument_cfg.items():
-            if not isinstance(io_cfg, dict):
+        for channel_name, channel_cfg in sorted(
+            self.instrument_cfg.items()
+        ):  # Sort to ensure deterministic sequencer order
+            if not isinstance(channel_cfg, dict):
                 continue
-            if io_name not in self.static_hw_properties.valid_ios:
+            if channel_name not in self.static_hw_properties.valid_channels:
                 raise ValueError(
-                    f"Invalid hardware config: '{io_name}' of "
+                    f"Invalid hardware config: '{channel_name}' of "
                     f"{self.name} ({self.__class__.__name__}) "
                     f"is not a valid name of an input/output."
                     f"\n\nSupported names for {self.__class__.__name__}:\n"
-                    f"{self.static_hw_properties.valid_ios}"
+                    f"{self.static_hw_properties.valid_channels}"
                 )
 
-            lo_name = io_cfg.get("lo_name", None)
-            downconverter_freq = io_cfg.get("downconverter_freq", None)
-            mix_lo = io_cfg.get("mix_lo", True)
-            marker_debug_mode_enable = io_cfg.get("marker_debug_mode_enable", False)
+            lo_name = channel_cfg.get("lo_name", None)
+            downconverter_freq = channel_cfg.get("downconverter_freq", None)
+            mix_lo = channel_cfg.get("mix_lo", True)
+            marker_debug_mode_enable = channel_cfg.get(
+                "marker_debug_mode_enable", False
+            )
 
-            portclock_configs: List[Dict[str, Any]] = io_cfg.get(
+            portclock_configs: List[Dict[str, Any]] = channel_cfg.get(
                 "portclock_configs", []
             )
 
             if not portclock_configs:
                 raise KeyError(
-                    f"No 'portclock_configs' entry found in '{io_name}' of {self.name}."
+                    f"No 'portclock_configs' entry found in '{channel_name}' of {self.name}."
                 )
 
             for target in portclock_configs:
                 portclock = (target["port"], target["clock"])
 
                 if portclock in self._portclocks_with_data:
-                    # Figure out which outputs need to be turned on.
-                    if io_name in self.static_hw_properties.output_map:
-                        default_marker = self.static_hw_properties.output_map[io_name]
-
-                    io_mode, connected_outputs, connected_inputs = helpers.get_io_info(
-                        io_name
-                    )
-                    seq_idx = len(sequencers)
                     new_seq = Sequencer(
                         parent=self,
-                        index=seq_idx,
+                        index=len(sequencers),
                         portclock=portclock,
                         static_hw_properties=self.static_hw_properties,
-                        io_name=io_name,
-                        connected_outputs=connected_outputs,
-                        connected_inputs=connected_inputs,
-                        io_mode=io_mode,
+                        channel_name=channel_name,
                         sequencer_cfg=target,
                         latency_corrections=self.latency_corrections,
                         lo_name=lo_name,
                         mix_lo=mix_lo,
                         marker_debug_mode_enable=marker_debug_mode_enable,
                         downconverter_freq=downconverter_freq,
-                        default_marker=default_marker,
                     )
                     sequencers[new_seq.name] = new_seq
 
                     # Check if the portclock was not multiply specified, which is not allowed
-                    if portclock in portclock_io_map:
+                    if portclock in portclock_to_channel:
                         raise ValueError(
                             f"Portclock {portclock} was assigned to multiple "
                             f"portclock_configs of {self.name}. This portclock was "
-                            f"used in io '{io_name}' despite being already previously "
-                            f"used in io '{portclock_io_map[portclock]}'. When using "
+                            f"used in channel '{channel_name}' despite being already previously "
+                            f"used in channel '{portclock_to_channel[portclock]}'. When using "
                             f"the same portclock for output and input, assigning only "
                             f"the output suffices."
                         )
 
-                    portclock_io_map[portclock] = io_name
+                    portclock_to_channel[portclock] = channel_name
 
         # Check if more portclock_configs than sequencers are active
         if len(sequencers) > self.static_hw_properties.max_sequencers:
@@ -1423,7 +1397,6 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
         different sequencers based on their portclocks. Raises an exception in case
         the device does not support acquisitions.
         """
-
         if (
             any(len(acq) > 0 for acq in self._acquisitions.values())
             and not self.supports_acquisition
@@ -1458,7 +1431,7 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
 
                     op_info_to_op_strategy_func = partial(
                         get_operation_strategy,
-                        io_mode=seq.io_mode,
+                        channel_name=seq._settings.channel_name,
                     )
                     strategies_for_pulses = map(
                         op_info_to_op_strategy_func,
@@ -1468,11 +1441,11 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
                         seq.pulses = []
 
                     for pulse_strategy in strategies_for_pulses:
-                        if seq.io_mode == enums.IoMode.DIGITAL:
+                        if ChannelMode.DIGITAL in seq._settings.channel_name:
                             # Digital mode always has one output.
                             pulse_strategy.operation_info.data[
                                 "output"
-                            ] = seq.connected_outputs[0]
+                            ] = seq.connected_output_indices[0]
                         seq.pulses.append(pulse_strategy)
 
         acq_data_list: List[OpInfo]
@@ -1481,7 +1454,7 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
                 if seq.portclock == portclock:
                     op_info_to_op_strategy_func = partial(
                         get_operation_strategy,
-                        io_mode=seq.io_mode,
+                        channel_name=seq._settings.channel_name,
                     )
                     strategies_for_acquisitions = map(
                         op_info_to_op_strategy_func,
@@ -1583,25 +1556,25 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
     def _configure_input_gains(self):
         """
         Configures input gain of module settings.
-        Loops through all valid ios and checks for gain values in hw config.
+        Loops through all valid channel names and checks for gain values in hw config.
         Throws a ValueError if a gain value gets modified.
         """
         in0_gain, in1_gain = None, None
-        for io_name in self.static_hw_properties.valid_ios:
-            io_mapping = self.instrument_cfg.get(io_name, None)
-            if io_mapping is None:
+        for channel_name in self.static_hw_properties.valid_channels:
+            channel_mapping = self.instrument_cfg.get(channel_name, None)
+            if channel_mapping is None:
                 continue
 
-            if io_name.startswith("complex"):
-                in0_gain = io_mapping.get("input_gain_I", None)
-                in1_gain = io_mapping.get("input_gain_Q", None)
+            if channel_name.startswith(ChannelMode.COMPLEX):
+                in0_gain = channel_mapping.get("input_gain_I", None)
+                in1_gain = channel_mapping.get("input_gain_Q", None)
 
-            elif io_name.startswith("real"):
+            elif channel_name.startswith(ChannelMode.REAL):
                 # The next code block is for backwards compatibility.
-                in_gain = io_mapping.get("input_gain", None)
+                in_gain = channel_mapping.get("input_gain", None)
                 if in_gain is None:
-                    in0_gain = io_mapping.get("input_gain_0", None)
-                    in1_gain = io_mapping.get("input_gain_1", None)
+                    in0_gain = channel_mapping.get("input_gain_0", None)
+                    in1_gain = channel_mapping.get("input_gain_1", None)
                 else:
                     in0_gain = in_gain
                     in1_gain = in_gain
@@ -1614,7 +1587,7 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
                     self._settings.in0_gain = in0_gain
                 else:
                     raise ValueError(
-                        f"Overwriting gain of {io_name} of module {self.name} "
+                        f"Overwriting gain of {channel_name} of module {self.name} "
                         f"to in0_gain: {in0_gain}.\nIt was previously set to "
                         f"in0_gain: {self._settings.in0_gain}."
                     )
@@ -1627,7 +1600,7 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
                     self._settings.in1_gain = in1_gain
                 else:
                     raise ValueError(
-                        f"Overwriting gain of {io_name} of module {self.name} "
+                        f"Overwriting gain of {channel_name} of module {self.name} "
                         f"to in1_gain: {in1_gain}.\nIt was previously set to "
                         f"in1_gain: {self._settings.in1_gain}."
                     )
@@ -1645,17 +1618,17 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
             output_cfg = self.instrument_cfg[output_label]
             voltage_range = self.static_hw_properties.mixer_dc_offset_range
             if output_idx == 0:
-                self._settings.offset_ch0_path0 = helpers.calc_from_units_volt(
+                self._settings.offset_ch0_path_I = helpers.calc_from_units_volt(
                     voltage_range, self.name, "dc_mixer_offset_I", output_cfg
                 )
-                self._settings.offset_ch0_path1 = helpers.calc_from_units_volt(
+                self._settings.offset_ch0_path_Q = helpers.calc_from_units_volt(
                     voltage_range, self.name, "dc_mixer_offset_Q", output_cfg
                 )
             else:
-                self._settings.offset_ch1_path0 = helpers.calc_from_units_volt(
+                self._settings.offset_ch1_path_I = helpers.calc_from_units_volt(
                     voltage_range, self.name, "dc_mixer_offset_I", output_cfg
                 )
-                self._settings.offset_ch1_path1 = helpers.calc_from_units_volt(
+                self._settings.offset_ch1_path_Q = helpers.calc_from_units_volt(
                     voltage_range, self.name, "dc_mixer_offset_Q", output_cfg
                 )
 
@@ -1664,7 +1637,7 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
         Raises an error if multiple sequencers use scope mode acquisition,
         because that's not supported by the hardware.
         Also, see
-        :func:`~quantify_scheduler.instrument_coordinator.components.qblox.QRMComponent._determine_scope_mode_acquisition_sequencer_and_channel`
+        :func:`~quantify_scheduler.instrument_coordinator.components.qblox.QRMComponent._determine_scope_mode_acquisition_sequencer_and_qblox_acq_index`
         which also ensures the program that gets uploaded to the hardware satisfies this requirement.
 
         Raises
@@ -1717,6 +1690,16 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
                     break
                 if other_op.is_real_time_io_operation:
                     return True
+                if other_op.is_return_stack:
+                    raise RuntimeError(
+                        f"VoltageOffset operation {op} with start time {op.timing} "
+                        "cannot be scheduled at the same time as the end of a "
+                        f"control-flow block {other_op}, which ends at "
+                        f"{other_op.timing}. The control-flow block can be extended "
+                        "by adding an IdlePulse operation with a duration of at least "
+                        f"{constants.GRID_TIME} ns, or the VoltageOffset can be "
+                        "replaced by another operation."
+                    )
             return False
 
         # Check all other operations behind the operation with op_index
@@ -1742,12 +1725,18 @@ class QbloxBaseModule(ControlDeviceCompiler, ABC):
         # inserted
         upd_param_infos: Set[Tuple[str, str, float]] = set()
         for op_index, op in enumerate(pulses_and_acqs):
-            if op.is_offset_instruction and not (
-                # Due to the repetition loop, do not insert at the end of the schedule
-                helpers.is_within_half_grid_time(self.total_play_time, op.timing)
-                or self._any_other_updating_instruction_at_timing(
-                    op_index=op_index, sorted_pulses_and_acqs=pulses_and_acqs
+            if not op.is_offset_instruction:
+                continue
+            if helpers.is_within_half_grid_time(self.total_play_time, op.timing):
+                raise RuntimeError(
+                    f"VoltageOffset operation {op} with start time {op.timing} cannot "
+                    "be scheduled at the very end of a Schedule. The Schedule can be "
+                    "extended by adding an IdlePulse operation with a duration of at "
+                    f"least {constants.GRID_TIME} ns, or the VoltageOffset can be "
+                    "replaced by another operation."
                 )
+            if not self._any_other_updating_instruction_at_timing(
+                op_index=op_index, sorted_pulses_and_acqs=pulses_and_acqs
             ):
                 upd_param_infos.add(
                     (op.data["port"], op.data["clock"], round(op.timing, ndigits=9))
@@ -1918,7 +1907,7 @@ class QbloxRFModule(QbloxBaseModule):
 
     @property
     def settings_type(self) -> type:
-        """The settings type used by RF modules"""
+        """The settings type used by RF modules."""
         if self.is_pulsar:
             raise RuntimeError(
                 "Cannot return RFModule settings, RF pulsar components do not exist."
@@ -1926,9 +1915,7 @@ class QbloxRFModule(QbloxBaseModule):
         return RFModuleSettings
 
     def assign_frequencies(self, sequencer: Sequencer):
-        """
-        Determines LO/IF frequencies and assigns them for RF modules.
-        """
+        """Determines LO/IF frequencies and assigns them for RF modules."""
         if self.is_pulsar:
             raise RuntimeError(
                 "Cannot determine LO/IF frequencies, RF pulsar components do not exist."
@@ -1936,7 +1923,7 @@ class QbloxRFModule(QbloxBaseModule):
 
         compiler_container = self.parent.parent
         if (
-            sequencer.connected_outputs is None
+            sequencer.connected_output_indices is None
             or sequencer.clock not in compiler_container.resources
         ):
             return
@@ -1971,7 +1958,7 @@ class QbloxRFModule(QbloxBaseModule):
         Use the sequencer output to module output correspondence, and then
         use the fact that LOX is connected to module output X.
         """
-        for sequencer_output_index in sequencer.connected_outputs:
+        for sequencer_output_index in sequencer.connected_output_indices:
             if sequencer_output_index % 2 != 0:
                 # We will only use real output 0 and 2, as they are part of the same
                 # complex outputs as real output 1 and 3

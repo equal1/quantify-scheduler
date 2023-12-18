@@ -8,9 +8,9 @@ import logging
 from typing import Any, Dict, Optional
 
 import numpy as np
-import math
 
 from quantify_scheduler.backends.qblox import constants, helpers, q1asm_instructions
+from quantify_scheduler.backends.qblox.enums import ChannelMode
 from quantify_scheduler.backends.qblox.operation_handling.base import IOperationStrategy
 from quantify_scheduler.backends.qblox.qasm_program import QASMProgram
 from quantify_scheduler.backends.types import qblox as types
@@ -20,22 +20,20 @@ logger = logging.getLogger(__name__)
 
 
 class PulseStrategyPartial(IOperationStrategy):
-    """Contains the logic shared between all the pulses."""
+    """
+    Contains the logic shared between all the pulses.
 
-    def __init__(self, operation_info: types.OpInfo, io_mode: str):
-        """
-        Constructor.
+    Parameters
+    ----------
+    operation_info
+        The operation info that corresponds to this pulse.
+    channel_name
+        Specifies the channel identifier of the hardware config (e.g. `complex_output_0`).
+    """
 
-        Parameters
-        ----------
-        operation_info
-            The operation info that corresponds to this pulse.
-        io_mode
-            Either "real", "imag" or complex depending on whether the signal affects
-            only path0, path1 or both.
-        """
+    def __init__(self, operation_info: types.OpInfo, channel_name: str):
         self._pulse_info: types.OpInfo = operation_info
-        self.io_mode = io_mode
+        self.channel_name = channel_name
 
     @property
     def operation_info(self) -> types.OpInfo:
@@ -43,34 +41,35 @@ class PulseStrategyPartial(IOperationStrategy):
         return self._pulse_info
 
     def _check_amplitudes_set(self):
-        if self._amplitude_path0 is None:
-            raise ValueError("Amplitude for path0 is None.")
-        if self._amplitude_path1 is None:
-            raise ValueError("Amplitude for path1 is None.")
+        if self._amplitude_path_I is None:
+            raise ValueError("Amplitude for path_I is None.")
+        if self._amplitude_path_Q is None:
+            raise ValueError("Amplitude for path_Q is None.")
 
 
 class GenericPulseStrategy(PulseStrategyPartial):
     """
-    Default class for handling pulses. No assumptions are made with regards to the
-    pulse shape and no optimizations are done.
+    Default class for handling pulses.
+
+    No assumptions are made with regards to the pulse shape and no optimizations
+    are done.
+
+    Parameters
+    ----------
+    operation_info
+        The operation info that corresponds to this pulse.
+    channel_name
+        Specifies the channel identifier of the hardware config (e.g. `complex_output_0`).
     """
 
-    def __init__(self, operation_info: types.OpInfo, io_mode: str):
-        """
-        Constructor for this strategy.
+    def __init__(self, operation_info: types.OpInfo, channel_name: str):
+        super().__init__(
+            operation_info=operation_info,
+            channel_name=channel_name,
+        )
 
-        Parameters
-        ----------
-        operation_info
-            The operation info that corresponds to this pulse.
-        io_mode
-            Either "real", "imag" or "complex" depending on whether the signal affects
-            only path0, path1 or both, respectively.
-        """
-        super().__init__(operation_info, io_mode)
-
-        self._amplitude_path0: Optional[float] = None
-        self._amplitude_path1: Optional[float] = None
+        self._amplitude_path_I: Optional[float] = None
+        self._amplitude_path_Q: Optional[float] = None
 
         self._waveform_index0: Optional[int] = None
         self._waveform_index1: Optional[int] = None
@@ -81,8 +80,9 @@ class GenericPulseStrategy(PulseStrategyPartial):
         """
         Generates the data and adds them to the ``wf_dict`` (if not already present).
 
-        In complex mode, real-valued data is produced on sequencer path0 (:math:`I_\\text{IF}`)
-        and imaginary data on sequencer path1 (:math:`Q_\\text{IF}`) after the NCO mixing.
+        In complex mode (e.g. ``complex_output_0``), the NCO produces real-valued data
+        (:math:`I_\\text{IF}`) on sequencer path_I and imaginary data (:math:`Q_\\text{IF}`)
+        on sequencer path_Q.
 
         .. math::
             \\underbrace{\\begin{bmatrix}
@@ -91,34 +91,44 @@ class GenericPulseStrategy(PulseStrategyPartial):
             \\begin{bmatrix}
             I \\\\
             Q \\end{bmatrix} =
+            \\begin{bmatrix}
+            I \\cdot \\cos\\omega t - Q \\cdot\\sin\\omega t \\\\
+            I \\cdot \\sin\\omega t + Q \\cdot\\cos\\omega t \\end{bmatrix}
             \\begin{matrix}
-            \\overbrace{ I \\cdot \\cos\\omega t - Q \\cdot\\sin\\omega t}^{\\small \\textbf{real} \\Rightarrow \\text{path0}} \\\\
-            \\underbrace{I \\cdot \\sin\\omega t + Q \\cdot\\cos\\omega t}_{\\small \\textbf{imag} \\Rightarrow \\text{path1}} \\end{matrix} =
+            \\ \\text{(path_I)} \\\\
+            \\ \\text{(path_Q)} \\end{matrix}
+            =
             \\begin{bmatrix}
             I_\\text{IF} \\\\
             Q_\\text{IF} \\end{bmatrix}
 
-        In real mode, :math:`I_\\text{IF}` can be produced on either
-        path0 (``io_mode == "real"``) or path1 (``io_mode == "imag"``).
 
-        For ``io_mode == imag``, the real-valued input (:math:`I`) on path0 is
-        swapped with imaginary input (:math:`Q`) on path1. We multiply :math:`Q` by -1
-        (via ``amp_imag``) to undo the 90-degree phase shift resulting from swapping the
-        NCO input paths.
+        In real mode (e.g. ``real_output_0``), the NCO produces :math:`I_\\text{IF}` on
+        path_I 
+
 
         .. math::
             \\underbrace{\\begin{bmatrix}
             \\cos\\omega t & -\\sin\\omega t \\\\
             \\sin\\omega t & \\phantom{-}\\cos\\omega t \\end{bmatrix}}_\\text{NCO}
             \\begin{bmatrix}
-            -Q \\\\
-            I \\end{bmatrix}  =
-            \\begin{matrix}
-            \\\\
-            \\underbrace{-Q \\cdot \\sin\\omega t + I \\cdot\\cos\\omega t}_{\\small \\textbf{real} \\Rightarrow \\text{path1}} \\end{matrix}=
+            I \\\\
+            Q \\end{bmatrix}  =
             \\begin{bmatrix}
-            - \\\\
-            I_\\text{IF} \\end{bmatrix}
+            I \\cdot \\cos\\omega t - Q \\cdot\\sin\\omega t\\\\
+             - \\end{bmatrix}
+            \\begin{matrix}
+            \\ \\text{(path_I)} \\\\
+            \\ \\text{(path_Q)} \\end{matrix}
+            =
+            \\begin{bmatrix}
+            I_\\text{IF} \\\\
+            - \\end{bmatrix}
+        
+
+        Note that the fields marked with `-` represent waveforms that are not relevant
+        for the mode.
+
 
         Parameters
         ----------
@@ -129,9 +139,9 @@ class GenericPulseStrategy(PulseStrategyPartial):
         Raises
         ------
         ValueError
-            Data is complex (has an imaginary component), but the io_mode is not set
-            to "complex".
-        """  # pylint: disable=line-too-long
+            Data is complex (has an imaginary component), but the channel_name is not
+            set as complex (e.g. ``complex_output_0``).
+        """  # pylint: disable=line-too-long  # noqa: D301
         op_info = self.operation_info
         waveform_data = helpers.generate_waveform_data(
             op_info.data, sampling_rate=constants.SAMPLING_RATE
@@ -139,7 +149,10 @@ class GenericPulseStrategy(PulseStrategyPartial):
         waveform_data, amp_real, amp_imag = normalize_waveform_data(waveform_data)
         self._waveform_len = len(waveform_data)
 
-        if np.any(np.iscomplex(waveform_data)) and not self.io_mode == "complex":
+        if (
+            np.any(np.iscomplex(waveform_data))
+            and not ChannelMode.COMPLEX in self.channel_name
+        ):
             raise ValueError(
                 f"Complex valued {str(op_info)} detected but the sequencer"
                 f" is not expecting complex input. This can be caused by "
@@ -147,31 +160,25 @@ class GenericPulseStrategy(PulseStrategyPartial):
                 f" marked as real.\n\nException caused by {repr(op_info)}."
             )
 
+        non_null = lambda amp: abs(amp) >= 2 / constants.IMMEDIATE_SZ_GAIN
+
         idx_real = (
             helpers.add_to_wf_dict_if_unique(
                 wf_dict=wf_dict, waveform=waveform_data.real
             )
-            if (not math.isclose(amp_real, 0.0))
+            if non_null(amp_real)
             else None
         )
         idx_imag = (
             helpers.add_to_wf_dict_if_unique(
                 wf_dict=wf_dict, waveform=waveform_data.imag
             )
-            if (not math.isclose(amp_imag, 0.0))
+            if non_null(amp_imag)
             else None
         )
 
-        # Update self._waveform_index and self._amplitude_path
-        if self.io_mode == "imag":
-            self._waveform_index0, self._waveform_index1 = idx_imag, idx_real
-            self._amplitude_path0, self._amplitude_path1 = (
-                -amp_imag,  # Multiply by -1 to undo 90-degree shift
-                amp_real,
-            )
-        else:
-            self._waveform_index0, self._waveform_index1 = idx_real, idx_imag
-            self._amplitude_path0, self._amplitude_path1 = amp_real, amp_imag
+        self._waveform_index0, self._waveform_index1 = idx_real, idx_imag
+        self._amplitude_path_I, self._amplitude_path_Q = amp_real, amp_imag
 
     def insert_qasm(self, qasm_program: QASMProgram):
         """
@@ -191,7 +198,7 @@ class GenericPulseStrategy(PulseStrategyPartial):
         index1 = self._waveform_index1
         if (index0 is not None) or (index1 is not None):
             qasm_program.set_gain_from_amplitude(
-                self._amplitude_path0, self._amplitude_path1, self.operation_info
+                self._amplitude_path_I, self._amplitude_path_Q, self.operation_info
             )
             # If a channel doesn't have an index (index0 or index1 is None) means,
             # that for that channel we do not want to play any waveform;
@@ -209,9 +216,7 @@ class GenericPulseStrategy(PulseStrategyPartial):
 
 
 class MarkerPulseStrategy(PulseStrategyPartial):
-    """
-    If this strategy is used a digital pulse is played on the corresponding marker.
-    """
+    """If this strategy is used a digital pulse is played on the corresponding marker."""
 
     def generate_data(self, wf_dict: Dict[str, Any]):
         """Returns None as no waveforms are generated in this strategy."""
@@ -227,22 +232,29 @@ class MarkerPulseStrategy(PulseStrategyPartial):
         qasm_program
             The QASMProgram to add the assembly instructions to.
         """
-        if self.io_mode != "digital":
+        if ChannelMode.DIGITAL not in self.channel_name:
+            port = self.operation_info.data.get("port")
+            clock = self.operation_info.data.get("clock")
+
             raise ValueError(
-                f"MarkerPulseStrategy can only be used with digital IO, not {self.io_mode}. "
+                f"{MarkerPulseStrategy.__name__} can only be used with a "
+                f"digital channel. Please make sure that "
+                f"'digital' keyword is included in the channel_name in the hardware configuration "
+                f"for port-clock combination '{port}-{clock}' (current channel_name is '{self.channel_name}')."
                 f"Operation causing exception: {self.operation_info}"
             )
         duration = round(self.operation_info.duration * 1e9)
-        output = int(self.operation_info.data["output"])
+        marker_bit_index = int(self.operation_info.data["output"])
         default_marker = qasm_program.static_hw_properties.default_marker
-        # RF modules use first 2 bits of marker string as output/input switch.
+        # RF modules use first 2 bits of marker bitstring as output/input switch.
         if qasm_program.static_hw_properties.instrument_type in ("QRM-RF", "QCM-RF"):
-            output += 2
-        # QRM-RF has swapped addressing of outputs, TODO: change when fixed in firmware
-        if qasm_program.static_hw_properties.instrument_type == "QRM-RF":
-            output = self._fix_output_addressing(output)
+            marker_bit_index += 2
+        # QCM-RF has swapped addressing of outputs
+        marker_bit_index = self._fix_marker_bit_output_addressing_qcm_rf(
+            qasm_program=qasm_program, marker_bit_index=marker_bit_index
+        )
 
-        qasm_program.set_marker((1 << output) | default_marker)
+        qasm_program.set_marker((1 << marker_bit_index) | default_marker)
         qasm_program.emit(q1asm_instructions.UPDATE_PARAMETERS, constants.GRID_TIME)
         qasm_program.elapsed_time += constants.GRID_TIME
         # Wait for the duration of the pulse minus 2 times grid time, one for each upd_param.
@@ -252,13 +264,13 @@ class MarkerPulseStrategy(PulseStrategyPartial):
         qasm_program.elapsed_time += constants.GRID_TIME
 
     @staticmethod
-    def _fix_output_addressing(output):
-        """
-        Temporary fix for the marker output addressing of the QRM-RF.
-        QRM-RF has swapped addressing of outputs. TODO: change when fixed in firmware
-        """
-        if output == 3:
-            output = 4
-        elif output == 4:
-            output = 3
-        return output
+    def _fix_marker_bit_output_addressing_qcm_rf(
+        qasm_program: QASMProgram, marker_bit_index: int
+    ):
+        """Fix for the swapped marker bit output addressing of the QCM-RF."""
+        if qasm_program.static_hw_properties.instrument_type == "QCM-RF":
+            if marker_bit_index == 2:
+                marker_bit_index = 3
+            elif marker_bit_index == 3:
+                marker_bit_index = 2
+        return marker_bit_index

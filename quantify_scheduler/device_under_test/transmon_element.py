@@ -1,5 +1,6 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
+"""The module contains definitions related to transmon elements."""
 from typing import Any, Dict, Tuple
 import math
 
@@ -14,7 +15,7 @@ from quantify_scheduler.backends.graph_compilation import (
     DeviceCompilationConfig,
     OperationCompilationConfig,
 )
-from quantify_scheduler.helpers.validators import Numbers
+from quantify_scheduler.helpers.validators import Numbers, _Hashable
 from quantify_scheduler.device_under_test.device_element import DeviceElement
 from quantify_scheduler.operations import (
     pulse_factories,
@@ -24,9 +25,7 @@ from quantify_scheduler.operations import (
 
 
 class Ports(InstrumentChannel):
-    """
-    Submodule containing the ports.
-    """
+    """Submodule containing the ports."""
 
     def __init__(self, parent: InstrumentBase, name: str, **kwargs: Any) -> None:
         super().__init__(parent=parent, name=name)
@@ -57,9 +56,7 @@ class Ports(InstrumentChannel):
 
 
 class ClocksFrequencies(InstrumentChannel):
-    """
-    Submodule containing the clock frequencies specifying the transitions to address.
-    """
+    """Submodule containing the clock frequencies specifying the transitions to address."""
 
     def __init__(self, parent: InstrumentBase, name: str, **kwargs: Any) -> None:
         super().__init__(parent=parent, name=name)
@@ -96,9 +93,7 @@ class ClocksFrequencies(InstrumentChannel):
 
 
 class IdlingReset(InstrumentChannel):
-    """
-    Submodule containing parameters for doing a reset by idling.
-    """
+    """Submodule containing parameters for doing a reset by idling."""
 
     def __init__(self, parent: InstrumentBase, name: str, **kwargs: Any) -> None:
         super().__init__(parent=parent, name=name)
@@ -115,8 +110,9 @@ class IdlingReset(InstrumentChannel):
 
 class RxyDRAG(InstrumentChannel):
     """
-    Submodule containing parameters for performing an Rxy operation
-    using a DRAG pulse.
+    Submodule containing parameters for performing an Rxy operation.
+
+    The Rxy operation uses a DRAG pulse.
     """
 
     def __init__(self, parent: InstrumentBase, name: str, **kwargs: Any) -> None:
@@ -164,8 +160,10 @@ class RxyDRAG(InstrumentChannel):
 
 class DispersiveMeasurement(InstrumentChannel):
     """
-    Submodule containing parameters to perform a measurement using
-    :func:`~quantify_scheduler.operations.measurement_factories.dispersive_measurement`
+    Submodule containing parameters to perform a measurement.
+
+    The measurement that is performed is using
+    :func:`~quantify_scheduler.operations.measurement_factories.dispersive_measurement`.
     """
 
     def __init__(self, parent: InstrumentBase, name: str, **kwargs: Any) -> None:
@@ -203,8 +201,8 @@ class DispersiveMeasurement(InstrumentChannel):
             name="acq_channel",
             instrument=self,
             initial_value=kwargs.get("acq_channel", 0),
-            unit="#",
-            vals=validators.Ints(min_value=0),
+            unit="",
+            vals=_Hashable(),
         )
         """Acquisition channel of to this device element."""
 
@@ -311,12 +309,13 @@ class DispersiveMeasurement(InstrumentChannel):
 
 class ReferenceMagnitude(InstrumentChannel):
     """
-    Submodule which describes an amplitude / power reference level, with respect to
-    which pulse amplitudes are defined. This can be specified in units of "V", "dBm"
-    or "A".
+    Submodule which describes an amplitude / power reference level.
 
-    Only one unit parameter may have a defined value at a time. If we call the set
-    method for any given unit parameter, all other unit parameters will be
+    The reference level is with respect to which pulse amplitudes are defined.
+    This can be specified in units of "V", "dBm" or "A".
+
+    Only one unit parameter may have a defined value at a time. If we call the
+    set method for any given unit parameter, all other unit parameters will be
     automatically set to nan.
     """
 
@@ -350,8 +349,9 @@ class ReferenceMagnitude(InstrumentChannel):
 
     def _set_parameter(self, value: float, parameter: str):
         """
-        Set the value of one of the unit parameters, while setting all the other
-        unit parameters to nan.
+        Set the value of one of the unit parameters.
+
+        All the other unit parameters are set to nan.
         """
         for name, par in self.parameters.items():
             if name == parameter:
@@ -362,10 +362,11 @@ class ReferenceMagnitude(InstrumentChannel):
     def get_val_unit(self) -> Tuple[float, str]:
         """
         Get the value of the amplitude reference and its unit, if one is defined.
+
         If a value is defined for more than one unit, raise an exception.
 
         Returns
-        ----------
+        -------
         value
             The value of the amplitude reference
         unit
@@ -386,21 +387,21 @@ class ReferenceMagnitude(InstrumentChannel):
 
 class BasicTransmonElement(DeviceElement):
     """
-    A device element representing a single fixed-frequency transmon qubit coupled to a
-    readout resonator.
+    A device element representing a single fixed-frequency transmon qubit.
+
+    The qubit is coupled to a readout resonator.
+
+    Parameters
+    ----------
+    name
+        The name of the transmon element.
+    kwargs
+        Can be used to pass submodule initialization data by using submodule name
+        as keyword and as argument a dictionary containing the submodule parameter
+        names and their value.
     """
 
     def __init__(self, name: str, **kwargs):
-        """
-        Parameters
-        ----------
-        name
-            The name of the transmon element.
-        kwargs
-            Can be used to pass submodule initialization data by using submodule name
-            as keyword and as argument a dictionary containing the submodule parameter
-            names and their value.
-        """
         submodules_to_add = {
             "reset": IdlingReset,
             "rxy": RxyDRAG,
@@ -432,32 +433,9 @@ class BasicTransmonElement(DeviceElement):
         self.clock_freqs: ClocksFrequencies
         """Submodule :class:`~.ClocksFrequencies`."""
 
-    def __getstate__(self):
-        """
-        Serializes `BasicTransmonElement` by obtaining relevant information from
-        :func:`~Instrument.snapshot()`. The relevant information consists of the name
-        of the transmon element and a dictionary for each submodule containing its
-        parameter names and corresponding values.
-        """
-        snapshot = self.snapshot()
-
-        data = {"name": snapshot["name"]}
-        for submodule_name, submodule_data in snapshot["submodules"].items():
-            parameter_dict = {}
-            for parameter_name, parameter_data in submodule_data["parameters"].items():
-                parameter_dict[parameter_name] = parameter_data["value"]
-            data[submodule_name] = parameter_dict
-
-        state = {
-            "deserialization_type": self.__class__.__name__,
-            "mode": "__init__",
-            "data": data,
-        }
-        return state
-
     def _generate_config(self) -> Dict[str, Dict[str, OperationCompilationConfig]]:
         """
-        Generates part of the device configuration specific to a single qubit.
+        Generate part of the device configuration specific to a single qubit.
 
         This method is intended to be used when this object is part of a
         device object containing multiple elements.
@@ -521,7 +499,12 @@ class BasicTransmonElement(DeviceElement):
                         "acq_rotation": self.measure.acq_rotation(),
                         "acq_threshold": self.measure.acq_threshold(),
                     },
-                    gate_info_factory_kwargs=["acq_index", "bin_mode", "acq_protocol"],
+                    gate_info_factory_kwargs=[
+                        "acq_channel_override",
+                        "acq_index",
+                        "bin_mode",
+                        "acq_protocol",
+                    ],
                 ),
             }
         }
@@ -529,8 +512,10 @@ class BasicTransmonElement(DeviceElement):
 
     def generate_device_config(self) -> DeviceCompilationConfig:
         """
-        Generates a valid device config for the quantify-scheduler making use of the
-        :func:`~.circuit_to_device._compile_circuit_to_device` function.
+        Generate a valid device config.
+
+        The config will be used for the quantify-scheduler making use of the
+        :func:`~.circuit_to_device.compile_circuit_to_device` function.
 
         This enables the settings of this qubit to be used in isolation.
 
@@ -539,8 +524,6 @@ class BasicTransmonElement(DeviceElement):
             This config is only valid for single qubit experiments.
         """
         cfg_dict = {
-            "backend": "quantify_scheduler.backends"
-            ".circuit_to_device._compile_circuit_to_device",
             "elements": self._generate_config(),
             "clocks": {
                 f"{self.name}.01": self.clock_freqs.f01(),
