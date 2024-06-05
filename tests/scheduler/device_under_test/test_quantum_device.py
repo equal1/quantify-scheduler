@@ -1,6 +1,3 @@
-# pylint: disable=missing-function-docstring
-# pylint: disable=invalid-name
-
 import os
 import re
 from pathlib import Path
@@ -44,36 +41,36 @@ def test_generate_hardware_config(
     quantum_device = mock_setup_basic_transmon["quantum_device"]
 
     mock_hardware_cfg = {
-        "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
-        "ic_qcm0": {
-            "name": "qcm0",
-            "instrument_type": "Pulsar_QCM",
-            "mode": "complex",
-            "ref": "external",
-            "IP address": "192.168.0.3",
-            "complex_output_0": {
-                "lo_name": "ic_lo_mw0",
-                "lo_freq": None,
-                "seq0": {"port": "q0:mw", "clock": "q0.01", "interm_freq": -100e6},
+        "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+        "hardware_description": {
+            "cluster0": {
+                "instrument_type": "Cluster",
+                "ref": "external",
+                "modules": {
+                    "1": {"instrument_type": "QCM"},
+                    "2": {"instrument_type": "QRM"},
+                },
             },
+            "iq_mixer_ic_lo_mw0": {"instrument_type": "IQMixer"},
+            "iq_mixer_ic_lo_ro": {"instrument_type": "IQMixer"},
+            "ic_lo_ro": {"instrument_type": "LocalOscillator", "power": 1},
+            "ic_lo_mw0": {"instrument_type": "LocalOscillator", "power": 1},
         },
-        "ic_qrm0": {
-            "name": "qrm0",
-            "instrument_type": "Pulsar_QRM",
-            "mode": "complex",
-            "ref": "external",
-            "IP address": "192.168.0.2",
-            "complex_output_0": {
-                "lo_name": "ic_lo_ro",
-                "lo_freq": None,
-                "seq0": {"port": "q0:res", "clock": "q0.ro", "interm_freq": 50e6},
-            },
+        "hardware_options": {
+            "modulation_frequencies": {
+                "q0:mw-q0.01": {"lo_freq": None, "interm_freq": -100000000.0},
+                "q0:res-q0.ro": {"lo_freq": None, "interm_freq": 50000000.0},
+            }
         },
-        "ic_lo_ro": {"instrument_type": "LocalOscillator", "lo_freq": None, "power": 1},
-        "ic_lo_mw0": {
-            "instrument_type": "LocalOscillator",
-            "lo_freq": None,
-            "power": 1,
+        "connectivity": {
+            "graph": [
+                ["cluster0.module1.complex_output_0", "iq_mixer_ic_lo_mw0.if"],
+                ["ic_lo_mw0.output", "iq_mixer_ic_lo_mw0.lo"],
+                ["iq_mixer_ic_lo_mw0.rf", "q0:mw"],
+                ["cluster0.module2.complex_output_0", "iq_mixer_ic_lo_ro.if"],
+                ["ic_lo_ro.output", "iq_mixer_ic_lo_ro.lo"],
+                ["iq_mixer_ic_lo_ro.rf", "q0:res"],
+            ]
         },
     }
 
@@ -89,14 +86,12 @@ def test_generate_hardware_config(
 def dev():
     dev = QuantumDevice("dev")
     yield dev
-    dev.close()
 
 
 @pytest.fixture
 def meas_ctrl():
     test_mc = QuantumDevice("test_mc")
     yield test_mc
-    test_mc.close()
 
 
 def test_adding_non_element_raises(dev, meas_ctrl):

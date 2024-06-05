@@ -4,6 +4,10 @@
 
 from __future__ import annotations
 
+from quantify_scheduler.backends.qblox.conditional import (
+    FeedbackTriggerCondition,
+    FeedbackTriggerOperator,
+)
 from quantify_scheduler.backends.qblox.operation_handling import (
     acquisitions,
     base,
@@ -55,7 +59,11 @@ def _get_acquisition_strategy(
             )
         return acquisitions.SquareAcquisitionStrategy(operation_info)
 
-    elif protocol == "WeightedIntegratedComplex":
+    elif protocol in (
+        "WeightedIntegratedSeparated",
+        "NumericalSeparatedWeightedIntegration",
+        "NumericalWeightedIntegration",
+    ):
         return acquisitions.WeightedAcquisitionStrategy(operation_info)
 
     elif protocol == "TriggerCount":
@@ -78,9 +86,21 @@ def _get_pulse_strategy(
         return virtual.UpdateParameterStrategy(operation_info)
     elif operation_info.is_loop:
         return virtual.LoopStrategy(operation_info)
+    elif (
+        feedback_trigger_address := operation_info.data.get("feedback_trigger_address")
+    ) is not None:
+        trigger_condition = FeedbackTriggerCondition(
+            enable=True,
+            operator=FeedbackTriggerOperator.OR,
+            addresses=[feedback_trigger_address],
+        )
+        return virtual.ConditionalStrategy(
+            operation_info=operation_info, trigger_condition=trigger_condition
+        )
     elif operation_info.is_return_stack:
         return virtual.ControlFlowReturnStrategy(operation_info)
-
+    elif operation_info.data.get("name") == "LatchReset":
+        return virtual.ResetFeedbackTriggersStrategy(operation_info=operation_info)
     elif operation_info.data["port"] is None:
         if "phase_shift" in operation_info.data:
             return virtual.NcoPhaseShiftStrategy(operation_info)
@@ -91,7 +111,7 @@ def _get_pulse_strategy(
         else:
             return virtual.IdleStrategy(operation_info)
 
-    elif "clock" in operation_info.data and operation_info.data["clock"] == "digital":
+    elif operation_info.data.get("marker_pulse", False):
         return pulses.MarkerPulseStrategy(
             operation_info=operation_info,
             channel_name=channel_name,

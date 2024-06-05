@@ -1,8 +1,3 @@
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-# pylint: disable=redefined-outer-name
-# pylint: disable=too-many-locals
 from __future__ import annotations
 
 import pytest
@@ -14,7 +9,7 @@ from quantify_scheduler.helpers.mock_instruments import MockLocalOscillator
 
 
 @pytest.fixture
-def make_generic_qcodes_instruments(request):
+def make_generic_qcodes_instruments():
     lo_mw_q0 = MockLocalOscillator(name="lo_mw_q0")
     lo_ro_q0 = MockLocalOscillator(name="lo_ro_q0")
     lo_spec_q0 = MockLocalOscillator(name="lo_spec_q0")
@@ -22,14 +17,6 @@ def make_generic_qcodes_instruments(request):
     generic_icc = GenericInstrumentCoordinatorComponent(
         instrument_reference="test_generic_icc"
     )
-
-    def cleanup_instruments():
-        lo_mw_q0.close()
-        lo_ro_q0.close()
-        lo_spec_q0.close()
-        generic_icc.close()
-
-    request.addfinalizer(cleanup_instruments)
 
     return {
         "lo_mw_q0": lo_mw_q0,

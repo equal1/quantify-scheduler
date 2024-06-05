@@ -13,11 +13,12 @@ Download the notebook: {nb-download}`deprecated.ipynb`
 
 | **Target** | **Depr** | **Remv** | **Alternatives** |
 |---|---|---|---|
-| `ScheduleGettable.generate_diagnostics_report()` | 0.17 | - | See {ref}`ScheduleGettable.generate_diagnostics_report()` |
+| `common.DistortionCorrection` | 0.20.1 | 0.23 | See {ref}`DistortionCorrection => SoftwareDistortionCorrection`|
+| `ScheduleGettable.generate_diagnostics_report()` | 0.17 | 0.18 | See {ref}`ScheduleGettable.generate_diagnostics_report()` |
 | `plot_kwargs` parameter in `ScheduleBase.plot_pulse_diagram()` | 0.15 | - | See {ref}`plot_kwargs parameter in ScheduleBase.plot_pulse_diagram()` |
-| `repetitions` parameter in `ScheduleGettable.process_acquired_data()` | 0.15 | - | See {ref}`repetitions parameter in ScheduleGettable.process_acquired_data()` |
-| `t` parameter in `NumericalWeightedIntegrationComplex` | 0.13 | - | See {ref}`t parameter in NumericalWeightedIntegrationComplex` |
-| Qblox `convert_hw_config_to_portclock_configs_spec()` | 0.13 | - | See {ref}`Qblox Hardware Configuration` |
+| `repetitions` parameter in `ScheduleGettable.process_acquired_data()` | 0.15 | 0.18 | See {ref}`repetitions parameter in ScheduleGettable.process_acquired_data()` |
+| `t` parameter in `NumericalWeightedIntegrationComplex` | 0.13 | 0.18 | See {ref}`t parameter in NumericalWeightedIntegrationComplex` |
+| Qblox `convert_hw_config_to_portclock_configs_spec()` | 0.13 | 0.18 | See {ref}`Qblox Hardware Configuration` |
 | Qblox `instruction_generated_pulses_enabled` hardware config setting | 0.13 | 0.17 | See {ref}`Instruction-generated pulses (Qblox only)` |
 | `quantify_scheduler.visualization` | 0.12 | 0.15 | See {ref}`Circuit diagrams and pulse diagrams` |
 | `acq_channel` (in {class}`~quantify_scheduler.operations.gate_library.Measure` and {class}`~quantify_scheduler.operations.nv_native_library.CRCount`) | 0.10 | 0.13 | See {ref}`acq_channel` |
@@ -180,6 +181,34 @@ def simple_trace_sched(
 sched = simple_trace_sched(repetitions=1)
 ```
 
+## DistortionCorrection => SoftwareDistortionCorrection
+
+To prepare for distortion corrections performed by hardware, distortion corrections will now come in two flavors: `SoftwareDistortionCorrection` and `HardwareDistortionCorrection`. 
+
+In the hardware configuration, the following needs to be replaced:
+
+```{code-block} diff
+
+hardware_configuration = {
+    ...
+    hardware_options : {
+        ...
+            distortion_corrections = {
+-                "q0:fl-cl0.baseband": DistortionCorrection(
++                "q0:fl-cl0.baseband": SoftwareDistortionCorrection(    
+                    filter_func="scipy.signal.lfilter",
+                    input_var_name="x",
+                    kwargs={
+                        "b": [0, 0.25, 0.5],
+                        "a": [1]
+                    },
+                    clipping_values=[-2.5, 2.5]
+                )
+            }
+    }
+}
+```
+
 ## qcompile() => SerialCompiler
 
 The `qcompile()`, `device_compile()` and `hardware_compile()` compilation functions have been replaced by the {class}`~quantify_scheduler.backends.graph_compilation.SerialCompiler`. For step-by-step guides on how to perform compilation to the device level and hardware, please see {ref}`Compiling to Hardware<sec-tutorial-compiling>` and {ref}`Operations and Qubits<sec-tutorial-ops-qubits>`. A brief example is shown below.
@@ -210,7 +239,7 @@ compiled_schedule.timing_table
 
 ## ScheduleGettable.generate_diagnostics_report()
 
-In version 0.17, the {meth}`.ScheduleGettable.generate_diagnostics_report` method received a major update. This method should no longer be called directly. Instead, the experiment should be run via the {meth}`.ScheduleGettable.initialize_and_get_with_report` method, which executes the experiment and generates a diagnostics report for debugging.
+In version 0.17, the `ScheduleGettable.generate_diagnostics_report` method received a major update. This method should no longer be called directly. Instead, the experiment should be run via the {meth}`.ScheduleGettable.initialize_and_get_with_report` method, which executes the experiment and generates a diagnostics report for debugging.
 
 ## plot_kwargs parameter in ScheduleBase.plot_pulse_diagram()
 
@@ -304,8 +333,9 @@ In quantify-scheduler 0.8.0, the schema for the Qblox hardware configuration was
 1. `latency_correction` => standalone/top-level `latency_corrections`
 1. `line_gain_db` removed
 
-The code below can be used to convert old-style to new-style hardware configurations.
-Note that helper function `convert_hw_config_to_portclock_configs_spec` will be removed in version 0.17.0.
+```{warning}
+The helper function `convert_hw_config_to_portclock_configs_spec` has been removed in version 0.18.0.
+```
 
 ```{code-cell} ipython3
 depr_hardware_cfg = {
@@ -333,26 +363,31 @@ depr_hardware_cfg = {
 ```
 
 ```{code-cell} ipython3
-from quantify_scheduler.backends.qblox.helpers import (
-    convert_hw_config_to_portclock_configs_spec,
-)
-
-new_hardware_cfg = convert_hw_config_to_portclock_configs_spec(depr_hardware_cfg)
-
-
-fnc = lambda sub: {
-    key1: fnc(val1) if isinstance(val1, dict) else val1
-    for key1, val1 in sub.items()
-    if key1 != "line_gain_db"
+correct_hardware_cfg = {
+    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "cluster": {
+        "ref": "internal",
+        "instrument_type": "Cluster",
+        "cluster_module1": {
+            "instrument_type": "QRM_RF",
+            "complex_output_0": {
+                "portclock_configs": [
+                    {
+                        "port": "q6:res",
+                        "clock": "q6.ro"
+                    },
+                    {
+                        "port": "q1:res",
+                        "clock": "q1.ro"
+                    }
+                ]
+            }
+        }
+    },
+    "latency_corrections": {
+        "q6:res-q6.ro": 4e-09
+    }
 }
-
-new_hardware_cfg = fnc(new_hardware_cfg)
-```
-
-```{code-cell} ipython3
-import json
-
-print(json.dumps(new_hardware_cfg, indent=4))
 ```
 
 ## TransmonElement => BasicTransmonElement

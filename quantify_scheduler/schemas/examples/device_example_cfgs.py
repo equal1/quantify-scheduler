@@ -6,7 +6,7 @@ example_transmon_cfg = {
     "compilation_passes": [
         {
             "name": "circuit_to_device",
-            "compilation_func": "quantify_scheduler.backends.circuit_to_device._compile_circuit_to_device",
+            "compilation_func": "quantify_scheduler.backends.circuit_to_device.compile_circuit_to_device_with_config_validation",
         }
     ],
     "clocks": {
@@ -38,6 +38,11 @@ example_transmon_cfg = {
                 + "pulse_factories.phase_shift",
                 "gate_info_factory_kwargs": ["theta"],
                 "factory_kwargs": {"clock": "q0.01"},
+            },
+            "H": {
+                "factory_func": "quantify_scheduler.operations."
+                + "composite_factories.hadamard_as_y90z",
+                "factory_kwargs": {"qubit": "q0"},
             },
             "measure": {
                 "factory_func": "quantify_scheduler.operations."

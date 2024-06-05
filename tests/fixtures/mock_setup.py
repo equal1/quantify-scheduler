@@ -7,7 +7,6 @@ import pathlib
 import shutil
 from typing import Any, Dict, List, Union
 
-import numpy as np
 import pytest
 from qcodes import Instrument
 from quantify_core.data.handling import get_datadir, set_datadir
@@ -21,6 +20,9 @@ from quantify_scheduler.device_under_test.mock_setup import (
 from quantify_scheduler.device_under_test.quantum_device import QuantumDevice
 from quantify_scheduler.device_under_test.transmon_element import BasicTransmonElement
 from quantify_scheduler.schemas.examples import utils
+
+from tests import is_zhinst_available
+
 
 # Test hardware mappings. Note, these will change as we are updating our hardware
 # mapping for the graph based compilation.
@@ -79,7 +81,6 @@ def tmp_test_data_dir(tmp_path_factory):
         yield get_datadir()
 
 
-# pylint: disable=redefined-outer-name
 @pytest.fixture(scope="function", autouse=False)
 def mock_setup_basic_transmon():
     """
@@ -90,30 +91,9 @@ def mock_setup_basic_transmon():
     """
 
     # moved to a separate module to allow using the mock_setup in tutorials.
-    mock_setup = set_up_mock_transmon_setup()
-
-    mock_instruments = {
-        "meas_ctrl": mock_setup["meas_ctrl"],
-        "instrument_coordinator": mock_setup["instrument_coordinator"],
-        "q0": mock_setup["q0"],
-        "q1": mock_setup["q1"],
-        "q2": mock_setup["q2"],
-        "q3": mock_setup["q3"],
-        "q4": mock_setup["q4"],
-        "q0_q2": mock_setup["q0_q2"],
-        "q1_q2": mock_setup["q1_q2"],
-        "q2_q3": mock_setup["q2_q3"],
-        "q2_q4": mock_setup["q2_q4"],
-        "quantum_device": mock_setup["quantum_device"],
-    }
+    mock_instruments = set_up_mock_transmon_setup()
 
     yield mock_instruments
-
-    # NB only close the instruments this fixture is responsible for to avoid
-    # hard to debug side effects
-    # N.B. the keys need to correspond to the names of the instruments otherwise
-    # they do not close correctly. Watch out with edges (e.g., q0_q2)
-    close_instruments(mock_instruments)
 
 
 @pytest.fixture(scope="function", autouse=False)
@@ -123,21 +103,6 @@ def mock_setup_basic_transmon_with_standard_params(mock_setup_basic_transmon):
 
 
 @pytest.fixture(scope="function", autouse=False)
-def mock_setup_basic_transmon_with_weighted_integration(mock_setup_basic_transmon):
-    set_standard_params_transmon(mock_setup_basic_transmon)
-    for i in range(5):
-        qi: BasicTransmonElement = mock_setup_basic_transmon[f"q{i}"]
-        sample_rate_MHz = 500
-        acq_duration_us = 2
-        qi.measure.acq_weights_a(np.ones(sample_rate_MHz * acq_duration_us) * 0.6)
-        qi.measure.acq_weights_b(np.ones(sample_rate_MHz * acq_duration_us) * 0.4)
-        qi.measure.acq_weights_sampling_rate(sample_rate_MHz * 1e6)
-        qi.measure.acq_weight_type("Numerical")
-    yield mock_setup_basic_transmon
-
-
-# pylint: disable=redefined-outer-name
-@pytest.fixture(scope="function", autouse=False)
 def mock_setup_basic_nv():
     """
     Returns a mock setup for a basic 1-qubit NV-center device.
@@ -145,7 +110,6 @@ def mock_setup_basic_nv():
     mock_setup = set_up_mock_basic_nv_setup()
     set_standard_params_basic_nv(mock_setup)
     yield mock_setup
-    close_instruments(mock_setup)
 
 
 @pytest.fixture(scope="function", autouse=False)
@@ -205,6 +169,10 @@ def compile_config_basic_transmon_zhinst_hardware(
     # N.B. how this fixture produces the hardware config will change in the future
     # as we separate the config up into a more fine grained config. For now it uses
     # the old JSON files to load settings from.
+
+    # pytest sometimes reads fixtures before ignoring tests.
+    if not is_zhinst_available():
+        pytest.skip("zhinst backend is not available.")
     mock_setup = mock_setup_basic_transmon_with_standard_params
     mock_setup["quantum_device"].hardware_config(ZHINST_HARDWARE_COMPILATION_CONFIG)
 
@@ -230,35 +198,19 @@ def compile_config_basic_transmon_qblox_hardware(
 
 
 @pytest.fixture(scope="function", autouse=False)
-def compile_config_transmon_weighted_integration_qblox_hardware_pulsar(
-    mock_setup_basic_transmon_with_weighted_integration,
-    hardware_cfg_pulsar,
-):
-    """
-    A config for a quantum device with 5 transmon qubits connected in a star
-    configuration controlled using Qblox Hardware, with added parameters for weighted
-    integration.
-    """
-    mock_setup = mock_setup_basic_transmon_with_weighted_integration
-    mock_setup["quantum_device"].hardware_config(hardware_cfg_pulsar)
-
-    yield mock_setup["quantum_device"].generate_compilation_config()
-
-
-@pytest.fixture(scope="function", autouse=False)
-def compile_config_basic_transmon_qblox_hardware_pulsar(
+def compile_config_basic_transmon_qblox_hardware_cluster(
     mock_setup_basic_transmon_with_standard_params,
-    hardware_cfg_pulsar,
+    hardware_cfg_cluster,
 ):
     """
     A config for a quantum device with 5 transmon qubits connected in a star
-    configuration controlled using Qblox Pulsars.
+    configuration controlled using a Qblox Cluster.
     """
     # N.B. how this fixture produces the hardware config will change in the future
     # as we separate the config up into a more fine grained config. For now it uses
     # the old JSON files to load settings from.
     mock_setup = mock_setup_basic_transmon_with_standard_params
-    mock_setup["quantum_device"].hardware_config(hardware_cfg_pulsar)
+    mock_setup["quantum_device"].hardware_config(hardware_cfg_cluster)
 
     yield mock_setup["quantum_device"].generate_compilation_config()
 
@@ -278,5 +230,3 @@ def mock_setup_basic_transmon_elements(element_names: List[str]):
 
     mock_instruments = {"quantum_device": quantum_device, **elements}
     yield mock_instruments
-
-    close_instruments(mock_instruments)

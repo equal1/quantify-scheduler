@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# pylint: disable=wrong-import-position, unused-import, invalid-name
 #
 # Quantify documentation build configuration file, created by
 # sphinx-quickstart on Fri Jun  9 13:47:02 2017.
@@ -21,7 +20,6 @@
 import os
 import re
 import sys
-
 from typing import Any, Dict
 
 package_path = os.path.abspath("..")
@@ -29,7 +27,6 @@ sys.path.insert(0, package_path)
 
 
 # -- General configuration ---------------------------------------------
-# pylint: disable=invalid-name
 
 # If your documentation needs a minimal Sphinx version, state it here.
 #
@@ -56,6 +53,7 @@ extensions = [
     # however the smart_resolver seems to fail for external packages like `zhinst`
     "scanpydoc.elegant_typehints",
     "sphinxcontrib.bibtex",
+    "sphinxcontrib.mermaid",
     "autoapi.extension",
     "sphinx_design",
 ]
@@ -71,7 +69,7 @@ autoapi_template_dir = "_templates"
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
-    "qcodes": ("https://qcodes.github.io/Qcodes/", None),
+    "qcodes": ("https://microsoft.github.io/Qcodes/", None),
     "xarray": ("https://docs.xarray.dev/en/stable/", None),
     "networkx": ("https://networkx.org/documentation/stable/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
@@ -87,11 +85,20 @@ intersphinx_mapping = {
     ),
     "scipy": ("https://docs.scipy.org/doc/scipy/", None),
     "qblox-instruments": (
-        "https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/",
+        "https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/",
         None,
     ),
-    "zhinst-toolkit": ("https://docs.zhinst.com/zhinst-toolkit/en/latest/", None),
-    "zhinst-qcodes": ("https://docs.zhinst.com/zhinst-qcodes/en/v0.1/", None),
+    # FIXME change the "*objects.inv" strings in the lines below back to None, and
+    # remove the local files, once https://github.com/zhinst/zhinst-toolkit/issues/278
+    # is resolved.
+    "zhinst-toolkit": (
+        "https://docs.zhinst.com/zhinst-toolkit/en/latest/",
+        "zhinst_toolkit_objects.inv",
+    ),
+    "zhinst-qcodes": (
+        "https://docs.zhinst.com/zhinst-qcodes/en/v0.1/",
+        "zhinst_qcodes_objects.inv",
+    ),
 }
 
 bibtex_bibfiles = ["refs.bib"]
@@ -107,7 +114,7 @@ master_doc = "index"
 
 # General information about the project.
 project = "quantify-scheduler"
-copyright = "2020-2023, Qblox & Orange Quantum Systems"
+copyright = "2020-2024, Qblox & Orange Quantum Systems"
 author = "Quantify Consortium"
 
 
@@ -320,21 +327,21 @@ if os.environ.get("GITLAB_CI", "false") == "true":
 # https://github.com/QCoDeS/Qcodes/pull/2909
 # but the issues popped up again, so this is the best and easier solution so far
 
+# qcodes0.36.0 lazyloads h5py which causes build failures
+import h5py
+
 # qcodes imports scipy under the hood but since scipy=1.7.0 it needs to be imported
 # here with typing.TYPE_CHECKING = True otherwise we run into quantify-core#
 import lmfit  # related to quantify-core#218 and quantify-core#221
 import marshmallow
-import qcodes
-
-# qcodes0.36.0 lazyloads h5py which causes build failures
-import h5py
-
-# Prevents a circular import warning
-import tenacity
 
 # `pydantic` fails to import automatically and leads to broken documentation,
 # if not preloaded.
 import pydantic
+import qcodes
+
+# Prevents a circular import warning
+import tenacity
 
 # When building the docs we need `typing.TYPE_CHECKING` to be `True` so that the
 # sphinx' kernel loads the modules corresponding to the typehints and is able to
@@ -409,6 +416,11 @@ nb_mime_priority_overrides = [
     ("linkcheck", "image/png", 40),
 ]
 
+# Workaround for sphinxcontrib.mermaid bug:
+# mermaid.min.js needs to be loaded after require.min.js
+# see https://github.com/mgaitan/sphinxcontrib-mermaid/issues/124
+mermaid_js_priority = 100
+
 # These are working links but (the redirect) doesn't allow polling
 linkcheck_ignore = [
     "https://doi.org/10.1063/1.447644",
@@ -434,6 +446,7 @@ nitpick_ignore = [
         "py:class",
         "quantify_scheduler.schedules.schedule.CompiledSchedule.hardware_timing_table",
     ),
+    ("py:class", "DictOrdered"),
     ("py:class", "quantify_scheduler.helpers.schedule.AcquisitionMetadata"),
     ("py:class", "_StaircaseParameters"),
     ("py:class", "quantify_scheduler.operations.operation.Operation"),
@@ -455,7 +468,6 @@ nitpick_ignore = [
     ("py:obj", "quantify_scheduler.structure.DataStructure"),
     ("py:obj", "quantify_scheduler.backends.SerialCompiler"),
     ("py:obj", "quantify_scheduler.backends.qblox.operations.StitchedPulseBuilder"),
-    ("py:obj", "quantify_scheduler.backends.qblox.operations.VoltageOffset"),
     ("py:obj", "quantify_scheduler.backends.qblox.operations.long_ramp_pulse"),
     ("py:obj", "quantify_scheduler.backends.qblox.operations.long_square_pulse"),
     ("py:obj", "quantify_scheduler.backends.qblox.operations.staircase_pulse"),
@@ -477,10 +489,13 @@ nitpick_ignore = [
     ("py:class", "SUPPORTED_ACQ_PROTOCOLS"),
     ("py:class", "HardwareDescription"),
     ("py:class", "LatencyCorrection"),
+    ("py:class", "_SequencerT_co"),
+    ("py:class", "_ModuleSettingsT"),
     ("py:class", "quantify_scheduler.backends.types.qblox.QbloxHardwareDescription"),
     ("py:class", "quantify_scheduler.backends.types.zhinst.ZIHardwareDescription"),
     ("py:class", "ClusterModuleDescription"),
     ("py:class", "Literal[Zurich Instruments]"),
+    ("py:class", "Literal[Mock readout module]"),
     ("py:class", "RealInputGain"),
     ("py:class", "OutputAttenuation"),
     ("py:class", "InputAttenuation"),
@@ -494,7 +509,6 @@ nitpick_ignore = [
 nitpick_ignore_regex = [
     ("py:class", r"numpy.*"),
     ("py:class", r"np.*"),
-    ("py:.*", r"orjson.*"),
     ("py:.*", r"pydantic.*"),
     ("py:.*", r"qcodes.*"),
     ("py:class", r"Ellipsis.*"),
@@ -506,6 +520,7 @@ nitpick_ignore_regex = [
     ("py:class", r"mpl.*"),
     ("py:class", r"\"[a-zA-Z]+\""),  # Ignore string literals
     ("py:class", r".*\.Self"),
+    ("py:class", r"dataclasses.*"),
 ]
 
 with open("nitpick-exceptions.txt", encoding="utf-8") as nitpick_exceptions:
@@ -526,7 +541,6 @@ def maybe_skip_member(app, what, name, obj, skip, options):
         "quantify_scheduler.operations.pulse_factories.long_ramp_pulse",
         "quantify_scheduler.operations.pulse_factories.long_square_pulse",
         "quantify_scheduler.operations.pulse_factories.staircase_pulse",
-        "quantify_scheduler.operations.pulse_library.VoltageOffset",
     ]
     if str(name) in deprecated_objs:
         return True

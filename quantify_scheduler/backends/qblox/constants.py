@@ -7,6 +7,8 @@ MAX_NUMBER_OF_INSTRUCTIONS_QCM: int = 16384
 """Maximum supported number of instructions in Q1ASM programs for QCM/QCM-RF."""
 MAX_NUMBER_OF_INSTRUCTIONS_QRM: int = 12288
 """Maximum supported number of instructions in Q1ASM programs for QRM/QRM-RF."""
+MAX_NUMBER_OF_INSTRUCTIONS_QTM: int = 16384
+"""Maximum supported number of instructions in Q1ASM programs for QTM."""
 IMMEDIATE_SZ_GAIN = pow(2, 16)
 """Size of gain instruction immediates in Q1ASM programs."""
 IMMEDIATE_MAX_WAIT_TIME = pow(2, 16) - 4
@@ -25,12 +27,20 @@ NCO_FREQ_LIMIT_STEPS = 2e9
 For the minimum we multiply by -1."""
 NCO_SET_FREQ_WAIT = 8  # ns
 """Wait that is issued after NCO set_freq instruction, included via upd_param."""
-NCO_SET_PH_DELTA_WAIT = 8  # ns
+NCO_SET_PH_DELTA_WAIT = 4  # ns
 """Wait that is issued after NCO set_ph_delta instruction, included via upd_param."""
 
-GRID_TIME = 4  # ns
+GRID_TIME = 1  # ns
 """
 Clock period of the sequencers. All time intervals used must be multiples of this value.
+"""
+MIN_TIME_BETWEEN_OPERATIONS = 4  # ns
+"""
+Minimum time between two operations to prevent FIFO errors.
+"""
+NCO_TIME_GRID = 4  # ns
+"""
+Clock period of the NCO. All time intervals used must be multiples of this value for NCO related operations.
 """
 MIN_TIME_BETWEEN_ACQUISITIONS = 300  # ns
 """Minimum time between two acquisitions to prevent FIFO errors."""
@@ -59,6 +69,8 @@ NUMBER_OF_SEQUENCERS_QCM = 6
 """Number of sequencers supported by a QCM/QCM-RF in the latest firmware."""
 NUMBER_OF_SEQUENCERS_QRM = 6
 """Number of sequencers supported by a QRM/QRM-RF in the latest firmware."""
+NUMBER_OF_SEQUENCERS_QTM = 8
+"""Number of sequencers supported by a QTM in the latest firmware."""
 NUMBER_OF_REGISTERS: int = 64
 """Number of registers available in the Qblox sequencers."""
 MAX_SAMPLE_SIZE_SCOPE_ACQUISITIONS: int = 16384
@@ -77,3 +89,15 @@ MAX_NUMBER_OF_BINS: int = 131072
 """Number of bins available in the Qblox sequencers."""
 GENERIC_IC_COMPONENT_NAME: str = "generic"
 """Default name for the generic instrument coordinator component."""
+TRIGGER_DELAY: float = 364e-9
+"""
+Total delay time of the feedback trigger before it is registered after the
+end of a thresholded acquisition.
+"""
+MAX_FEEDBACK_TRIGGER_ADDRESS: int = 15
+"""Available trigger addresses on each cluster range from 1,...,15."""
+MAX_MIN_INSTRUCTION_WAIT: float = 4e-9
+"""
+Maximum of minimum wait times for real-time-instructions. e.g. play,
+set_cond, acquire, require at least 4ns.
+"""

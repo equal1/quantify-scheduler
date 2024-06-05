@@ -8,30 +8,39 @@ import json
 import warnings
 from abc import ABC
 from collections import UserDict
+from copy import copy
 from itertools import chain
 from typing import TYPE_CHECKING, Any, Hashable, Literal
 from uuid import uuid4
 
+import numpy as np
 import pandas as pd
 
 from quantify_scheduler import enums, json_utils, resources
 from quantify_scheduler.helpers.collections import make_hash
+from quantify_scheduler.helpers.importers import export_python_object_to_path_string
 from quantify_scheduler.json_utils import JSONSchemaValMixin
-from quantify_scheduler.operations.control_flow_library import Loop
+from quantify_scheduler.operations.control_flow_library import Conditional, Loop
 from quantify_scheduler.operations.operation import Operation
 
 if TYPE_CHECKING:
-    import numpy as np
     import plotly.graph_objects as go
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
 
     from quantify_scheduler.resources import Resource
 
+DictOrdered = dict
+"""
+An ordered dictionary type hint,
+which makes it clear and obvious
+that order is significant and used by the logic.
+Note: dict is ordered from Python version 3.7.
+Note: collections.OrderedDict can be slow in some cases.
+"""
 
-# pylint: disable=too-many-ancestors
+
 class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
-    # pylint: disable=line-too-long
     """
     Interface to be used for :class:`~.Schedule`.
 
@@ -49,8 +58,9 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
     - operation_dict - a hash table containing the unique
         :class:`quantify_scheduler.operations.operation.Operation` s added to the
         schedule.
-    - schedulables - a dictionary of all timing constraints added
-        between operations.
+    - schedulables - an ordered dictionary of all timing constraints added
+        between operations; when multiple schedulables have the same
+        absolute time, the order defined in the dictionary decides precedence.
 
     The :class:`~.Schedule` provides an API to create schedules.
     The :class:`~.CompiledSchedule` represents a schedule after
@@ -74,7 +84,6 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
 
     """  # noqa: E501
 
-    # pylint: enable=line-too-long
     @property
     def name(self) -> str:
         """Returns the name of the schedule."""
@@ -114,9 +123,9 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
         return self["operation_dict"]
 
     @property
-    def schedulables(self) -> dict[str, Any]:
+    def schedulables(self) -> DictOrdered[str, Any]:
         """
-        A list of schedulables describing the timing of operations.
+        Ordered dictionary of schedulables describing timing and order of operations.
 
         A schedulable uses timing constraints to constrain the operation in time by
         specifying the time (:code:`"rel_time"`) between a reference operation and the
@@ -210,7 +219,6 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
         ax: Axes | None = None,
         plot_backend: Literal["mpl"] = "mpl",
     ) -> tuple[Figure, Axes | list[Axes]]:
-        # pylint: disable=line-too-long
         """
         Create a circuit diagram visualization of the schedule using the specified plotting backend.
 
@@ -287,7 +295,7 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
 
         """  # noqa: E501
         # NB imported here to avoid circular import
-        # pylint: disable=import-outside-toplevel
+
         if plot_backend == "mpl":
             import quantify_scheduler.schedules._visualization.circuit_diagram as cd
 
@@ -297,7 +305,6 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
             f"plot_backend must be equal to 'mpl', value given: {repr(plot_backend)}"
         )
 
-    # pylint: disable=too-many-arguments
     def plot_pulse_diagram(
         self,
         port_list: list[str] | None = None,
@@ -305,10 +312,10 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
         modulation: Literal["off", "if", "clock"] = "off",
         modulation_if: float = 0.0,
         plot_backend: Literal["mpl", "plotly"] = "mpl",
-        plot_kwargs: dict | None = None,
+        x_range: tuple[float, float] = (-np.inf, np.inf),
+        combine_waveforms_on_same_port: bool = False,
         **backend_kwargs: Any,  # noqa: ANN401
     ) -> tuple[Figure, Axes] | go.Figure:
-        # pylint: disable=line-too-long
         """
         Create a visualization of all the pulses in a schedule using the specified plotting backend.
 
@@ -336,12 +343,15 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
             The time resolution used to sample the schedule in Hz.
         plot_backend:
             Plotting library to use, can either be 'mpl' or 'plotly'.
-        plot_kwargs:
-            Keyword arguments to be passed on to the plotting backend. The arguments
-            that can be used for either backend can be found in the documentation of
-            :func:`quantify_scheduler.schedules._visualization.pulse_diagram.pulse_diagram_matplotlib`
-            and
-            :func:`quantify_scheduler.schedules._visualization.pulse_diagram.pulse_diagram_plotly`.
+        x_range:
+            The range of the x-axis that is plotted, given as a tuple (left limit, right
+            limit). This can be used to reduce memory usage when plotting a small section of
+            a long pulse sequence. By default (-np.inf, np.inf).
+        combine_waveforms_on_same_port:
+            By default False. If True, combines all waveforms on the same port into one
+            single waveform. The resulting waveform is the sum of all waveforms on that
+            port (small inaccuracies may occur due to floating point approximation). If
+            False, the waveforms are shown individually.
         backend_kwargs:
             Keyword arguments to be passed on to the plotting backend. The arguments
             that can be used for either backend can be found in the documentation of
@@ -364,7 +374,9 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
 
                 from quantify_scheduler.backends.graph_compilation import SerialCompiler
                 from quantify_scheduler.device_under_test.quantum_device import QuantumDevice
-                from quantify_scheduler.operations.pulse_library import DRAGPulse, SquarePulse, RampPulse
+                from quantify_scheduler.operations.pulse_library import (
+                    DRAGPulse, SquarePulse, RampPulse, VoltageOffset,
+                )
                 from quantify_scheduler.resources import ClockResource
 
                 schedule = Schedule("Multiple waveforms")
@@ -386,7 +398,7 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
 
             .. jupyter-execute::
 
-                compiled_schedule.plot_pulse_diagram(sampling_rate=20e6, plot_backend='plotly')
+                _ = compiled_schedule.plot_pulse_diagram(sampling_rate=20e6, plot_backend='plotly')
 
             The same can be achieved in the default ``plot_backend`` (``matplotlib``)
             by passing the keyword argument ``multiple_subplots=True``:
@@ -395,48 +407,65 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
 
                 _ = compiled_schedule.plot_pulse_diagram(sampling_rate=20e6, multiple_subplots=True)
 
-        """  # noqa: E501
-        if plot_kwargs is None:
-            plot_kwargs = {}
-        else:
-            warnings.warn(
-                "Support for the 'plot_kwargs' argument will be dropped in "
-                "quantify-scheduler >= 0.18.0.\nPlease use regular keyword arguments "
-                "instead.",
-                FutureWarning,
-            )
+            By default, waveforms overlapping in time on the same port are shown separately:
 
-        kwargs = {**plot_kwargs, **backend_kwargs}
+            .. jupyter-execute::
+
+                schedule = Schedule("Overlapping waveforms")
+                schedule.add(VoltageOffset(offset_path_I=0.25, offset_path_Q=0.0, port="Q"))
+                schedule.add(SquarePulse(amp=0.1, duration=4e-6, port="Q"), rel_time=2e-6)
+                schedule.add(VoltageOffset(offset_path_I=0.0, offset_path_Q=0.0, port="Q"), ref_pt="start", rel_time=2e-6)
+
+                compiled_schedule = device_compiler.compile(schedule)
+
+                _ = compiled_schedule.plot_pulse_diagram(sampling_rate=20e6)
+
+            This behaviour can be changed with the parameter ``combine_waveforms_on_same_port``:
+
+            .. jupyter-execute::
+
+                _ = compiled_schedule.plot_pulse_diagram(sampling_rate=20e6, combine_waveforms_on_same_port=True)
+
+        """  # noqa: E501
+        # NB imported here to avoid circular import
+
+        from quantify_scheduler.schedules._visualization.pulse_diagram import (
+            sample_schedule,
+        )
+
+        sampled_pulses_and_acqs = sample_schedule(
+            self,
+            sampling_rate=sampling_rate,
+            port_list=port_list,
+            modulation=modulation,
+            modulation_if=modulation_if,
+            x_range=x_range,
+            combine_waveforms_on_same_port=combine_waveforms_on_same_port,
+        )
 
         if plot_backend == "mpl":
             # NB imported here to avoid circular import
-            # pylint: disable=import-outside-toplevel
+
             from quantify_scheduler.schedules._visualization.pulse_diagram import (
                 pulse_diagram_matplotlib,
             )
 
             return pulse_diagram_matplotlib(
-                schedule=self,
-                sampling_rate=sampling_rate,
-                port_list=port_list,
-                modulation=modulation,
-                modulation_if=modulation_if,
-                **kwargs,
+                sampled_pulses_and_acqs=sampled_pulses_and_acqs,
+                title=self["name"],
+                **backend_kwargs,
             )
         if plot_backend == "plotly":
             # NB imported here to avoid circular import
-            # pylint: disable=import-outside-toplevel
+
             from quantify_scheduler.schedules._visualization.pulse_diagram import (
                 pulse_diagram_plotly,
             )
 
             return pulse_diagram_plotly(
-                schedule=self,
-                sampling_rate=sampling_rate,
-                port_list=port_list,
-                modulation=modulation,
-                modulation_if=modulation_if,
-                **kwargs,
+                sampled_pulses_and_acqs=sampled_pulses_and_acqs,
+                title=self["name"],
+                **backend_kwargs,
             )
         raise ValueError(
             f"plot_backend must be equal to either 'mpl' or 'plotly', "
@@ -501,6 +530,7 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
                 hardware_config = utils.load_json_example_scheme(
                     "qblox_hardware_compilation_config.json"
                 )
+                hardware_config["hardware_options"].pop("distortion_corrections")
                 quantum_device.hardware_config(hardware_config)
 
                 compiler = SerialCompiler("compiler")
@@ -535,7 +565,7 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
         ------
         ValueError
             When the absolute timing has not been determined during compilation.
-        """  # noqa: E501 # pylint: disable=line-too-long
+        """  # noqa: E501
         timing_table_list = []
         for schedulable in self.schedulables.values():
             if "abs_time" not in schedulable:
@@ -625,8 +655,22 @@ class ScheduleBase(JSONSchemaValMixin, UserDict, ABC):
         """
         return self.get("duration", None)
 
+    def __getstate__(self) -> dict[str, Any]:
+        data = copy(self.data)
+        # For serialization, we need to keep the order
+        # of keys in the serialized data too.
+        data["schedulables"] = list(data["schedulables"].items())
+        return data
 
-class Schedule(ScheduleBase):  # pylint: disable=too-many-ancestors
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        if isinstance(state["schedulables"], list):
+            # Schedulables can be a list of pair of key values to store
+            # the order of schedulables too in the serialized data.
+            state["schedulables"] = {k: v for k, v in state["schedulables"]}
+        self.data = state
+
+
+class Schedule(ScheduleBase):
     """
     A modifiable schedule.
 
@@ -649,7 +693,7 @@ class Schedule(ScheduleBase):  # pylint: disable=too-many-ancestors
         The amount of times the schedule will be repeated, by default 1
     data
         A dictionary containing a pre-existing schedule, by default None
-    """  # pylint: disable=line-too-long
+    """
 
     schema_filename = "schedule.json"
 
@@ -661,19 +705,24 @@ class Schedule(ScheduleBase):  # pylint: disable=too-many-ancestors
 
         # ensure keys exist
         self["operation_dict"] = {}
-        self["schedulables"] = {}
         self["resource_dict"] = {}
-        self["name"] = "nameless"
+        self["name"] = name
         self["repetitions"] = repetitions
+
+        # Note the order of schedulables is important.
+        # If two schedulables have the same absolute time,
+        # the order is determined by the order of their keys.
+        self["schedulables"] = {}
 
         # This is used to define baseband pulses and is expected to always be present
         # in any schedule.
         self.add_resource(
             resources.BasebandClockResource(resources.BasebandClockResource.IDENTITY)
         )
-
-        if name is not None:
-            self["name"] = name
+        # This is used to define operations on marker and digital channels.
+        self.add_resource(
+            resources.DigitalClockResource(resources.DigitalClockResource.IDENTITY)
+        )
 
         if data is not None:
             self.data.update(data)
@@ -695,7 +744,6 @@ class Schedule(ScheduleBase):  # pylint: disable=too-many-ancestors
 
         self["resource_dict"][resource.name] = resource
 
-    # pylint: disable=too-many-arguments
     def add(
         self,
         operation: Operation | Schedule,
@@ -704,7 +752,7 @@ class Schedule(ScheduleBase):  # pylint: disable=too-many-ancestors
         ref_pt: Literal["start", "center", "end"] | None = None,
         ref_pt_new: Literal["start", "center", "end"] | None = None,
         label: str | None = None,
-        control_flow: Loop | None = None,
+        control_flow: Conditional | Loop | None = None,
         validate: bool = True,
     ) -> Schedulable:
         """
@@ -762,18 +810,19 @@ class Schedule(ScheduleBase):  # pylint: disable=too-many-ancestors
             raise ValueError(f"Schedulable name '{label}' must be unique.")
 
         # ensure that reference schedulable exists in current schedule
-        if ref_op is not None and (
-            (isinstance(ref_op, str) and ref_op not in self.schedulables)
-            # in case a user references a schedulable from another schedule
-            # that has a label that exists in this schedule:
-            or (
-                isinstance(ref_op, Schedulable)
-                and self.schedulables.get(str(ref_op)) is not ref_op
-            )
+        if (
+            ref_op is not None
+            and (ref_op not in self.schedulables)
+            and (not any([ref_op is op for op in self.schedulables.values()]))
         ):
             raise ValueError(
-                f"Reference schedulable '{ref_op}' does not exists in "
-                f"schedule '{self.name}'."
+                f"Reference schedulable '{ref_op}' does not exist in this schedule. Please "
+                "ensure that `ref_op` corresponds to a label, for example\n\n"
+                "    schedule.add(operationA, label='my_label')\n"
+                "    schedule.add(operationB, ref_op='my_label')\n\n"
+                "or a schedulable that has been added to the schedule, for example\n\n"
+                "    my_operation = schedule.add(operationA)\n"
+                "    schedule.add(operationB, ref_op=my_operation)."
             )
 
         operation_id = operation.hash
@@ -803,34 +852,31 @@ class Schedule(ScheduleBase):  # pylint: disable=too-many-ancestors
                 f"The provided object '{operation=}' is not"
                 " an instance of Operation or Schedule"
             )
-        if isinstance(operation, Loop):
+        if operation.get("control_flow_info") is not None:
+            name = operation.__class__.__name__
             raise ValueError(
-                "Attempting to manually add control flow operation. "
-                "Use the 'control_flow' kwarg instead."
+                f"Attempting to manually add control flow operation "
+                f"`{name}` to schedule. Please use "
+                f"the 'control_flow' kwarg instead, e.g. "
+                f"`schedule.add(..., control_flow={name}(...))`."
             )
         if control_flow is not None:
-            if isinstance(control_flow, Loop):
+            if isinstance(control_flow, (Loop, Conditional)):
                 warnings.warn(
-                    "Loops are an experimental feature."
+                    "Loops and Conditionals are an experimental feature."
                     " Please refer to the documentation:"
                     " https://quantify-os.org/docs/quantify-scheduler/reference/control_flow.html"  # noqa: E501
                 )
             else:
                 raise ValueError(
                     f"Attempting to add operation other than control flow as control flow."
-                    f" Supplied: '{control_flow=}' of type '{type(control_flow)}'\n"
-                    f" Valid: '{type(Loop)}' (or value 'None')."
+                    f" Supplied: '{control_flow=}'.\n"
+                    f" Valid: 'Loop', 'Conditional' or 'None'."
                 )
 
         # ensure the schedulable name is unique
         if label in self.schedulables:
             raise ValueError(f"Schedulable name '{label}' must be unique.")
-
-    def __getstate__(self) -> dict[str, Any]:
-        return self.data
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        self.data = state
 
 
 class Schedulable(JSONSchemaValMixin, UserDict):
@@ -937,13 +983,15 @@ class Schedulable(JSONSchemaValMixin, UserDict):
         return str(self["name"])
 
     def __getstate__(self) -> dict[str, Any]:
-        return {"deserialization_type": self.__class__.__name__, "data": self.data}
+        return {
+            "deserialization_type": export_python_object_to_path_string(self.__class__),
+            "data": self.data,
+        }
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         self.data = state["data"]
 
 
-# pylint: disable=too-many-ancestors
 class CompiledSchedule(ScheduleBase):
     """
     A schedule that contains compiled instructions ready for execution using the :class:`~.InstrumentCoordinator`.
@@ -957,7 +1005,7 @@ class CompiledSchedule(ScheduleBase):
         A :class:`~.CompiledSchedule` can be obtained by compiling a
         :class:`~.Schedule` using :meth:`~quantify_scheduler.backends.graph_compilation.QuantifyCompiler.compile`.
 
-    """  # pylint: disable=line-too-long  # noqa: E501
+    """  # noqa: E501
 
     schema_filename = "schedule.json"
 
@@ -994,7 +1042,7 @@ class CompiledSchedule(ScheduleBase):
 
         These values typically contain a combination of sequence files, waveform
         definitions, and parameters to configure on the instrument.
-        """  # pylint: disable=line-too-long
+        """
         return self["compiled_instructions"]
 
     @classmethod
@@ -1062,7 +1110,10 @@ class AcquisitionChannelMetadata:
 
     def __getstate__(self) -> dict[str, Any]:
         data = dataclasses.asdict(self)
-        return {"deserialization_type": self.__class__.__name__, "data": data}
+        return {
+            "deserialization_type": export_python_object_to_path_string(self.__class__),
+            "data": data,
+        }
 
     def __setstate__(self, state: dict[str, Any]) -> dict[str, Any]:
         self.__init__(**state["data"])
@@ -1092,7 +1143,10 @@ class AcquisitionMetadata:
 
     def __getstate__(self) -> dict[str, Any]:
         data = dataclasses.asdict(self)
-        return {"deserialization_type": self.__class__.__name__, "data": data}
+        return {
+            "deserialization_type": export_python_object_to_path_string(self.__class__),
+            "data": data,
+        }
 
     def __setstate__(self, state: dict[str, Any]) -> dict[str, Any]:
         self.__init__(**state["data"])

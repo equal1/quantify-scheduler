@@ -1,7 +1,3 @@
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-
 import math
 import numpy as np
 import pytest
@@ -15,7 +11,7 @@ from quantify_scheduler.device_under_test.nv_element import BasicElectronicNVEle
 from quantify_scheduler.gettables import ScheduleGettable
 from quantify_scheduler.schedules import spectroscopy_schedules as sps
 
-from tests.scheduler.instrument_coordinator.components.test_qblox import (  # pylint: disable=unused-import
+from tests.scheduler.instrument_coordinator.components.test_qblox import (
     make_cluster_component,
 )
 from tests.scheduler.schedules.compiles_all_backends import _CompilesAllBackends
@@ -88,7 +84,7 @@ class TestHeterodyneSpecScheduleNCO(TestHeterodyneSpecSchedule):
 
         rel_times = [
             self.sched_kwargs["init_duration"],
-            8e-9,
+            0,
             self.sched_kwargs["acquisition_delay"],
             self.sched_kwargs["integration_time"],
         ]
@@ -102,7 +98,11 @@ class TestHeterodyneSpecScheduleNCO(TestHeterodyneSpecSchedule):
             ), schedulable["label"]
             abs_time += rel_times[i]
 
-    @pytest.mark.xfail(reason="SetClockFrequency not supported in Zhinst backend")
+    @pytest.mark.needs_zhinst
+    @pytest.mark.xfail(
+        raises=NotImplementedError,
+        reason="SetClockFrequency not supported in Zhinst backend",
+    )
     def test_compiles_zi_backend(
         self, compile_config_basic_transmon_zhinst_hardware
     ) -> None:
@@ -116,20 +116,20 @@ def test_heterodyne_spec_sched_nco__qblox_hardware(
 ):
     cluster_name = "cluster0"
     hardware_cfg = {
-        "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
-        f"{cluster_name}": {
-            "ref": "internal",
-            "instrument_type": "Cluster",
-            f"{cluster_name}_module4": {
-                "instrument_type": "QRM_RF",
-                "complex_output_0": {
-                    "lo_freq": 5e9,
-                    "portclock_configs": [
-                        {"port": "q0:res", "clock": "q0.ro", "interm_freq": None},
-                    ],
-                },
-            },
+        "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+        "hardware_description": {
+            "cluster0": {
+                "instrument_type": "Cluster",
+                "modules": {"4": {"instrument_type": "QRM_RF"}},
+                "ref": "internal",
+            }
         },
+        "hardware_options": {
+            "modulation_frequencies": {
+                "q0:res-q0.ro": {"lo_freq": 5000000000.0, "interm_freq": None}
+            }
+        },
+        "connectivity": {"graph": [["cluster0.module4.complex_output_0", "q0:res"]]},
     }
 
     quantum_device = mock_setup_basic_transmon_with_standard_params["quantum_device"]
@@ -171,7 +171,15 @@ def test_heterodyne_spec_sched_nco__qblox_hardware(
         ro_freqs, 1 * np.exp(1j * np.deg2rad(45)), dtype=np.complex64
     )
     acq_channel = 0
-    expected_dataset = Dataset({acq_channel: ([f"acq_index_{acq_channel}"], exp_data)})
+    expected_dataset = Dataset(
+        {
+            acq_channel: (
+                [f"acq_index_{acq_channel}"],
+                exp_data,
+                {"acq_protocol": "SSBIntegrationComplex"},
+            )
+        }
+    )
     mocker.patch.object(
         ic,
         "retrieve_acquisition",
@@ -276,7 +284,7 @@ class TestTwoToneSpecScheduleNCO(TestTwoToneSpecSchedule):
 
         rel_times = [
             self.sched_kwargs["init_duration"],
-            8e-9,
+            0,
             self.sched_kwargs["spec_pulse_duration"]
             + self.sched_kwargs["ro_pulse_delay"],
             self.sched_kwargs["ro_acquisition_delay"],
@@ -292,7 +300,10 @@ class TestTwoToneSpecScheduleNCO(TestTwoToneSpecSchedule):
             ), schedulable["label"]
             abs_time += rel_times[i]
 
-    @pytest.mark.xfail(reason="SetClockFrequency not supported in Zhinst backend")
+    @pytest.mark.xfail(
+        raises=NotImplementedError,
+        reason="SetClockFrequency not supported in Zhinst backend",
+    )
     def test_compiles_zi_backend(
         self, compile_config_basic_transmon_zhinst_hardware
     ) -> None:
@@ -426,7 +437,7 @@ class TestNVDarkESRSchedNCO:
             qe0.cr_count.acq_duration(),
         ]
         rel_times = [
-            8e-9,
+            0,
             qe0.reset.duration(),
             qe0.spectroscopy_operation.duration(),
             qe0.measure.acq_duration(),

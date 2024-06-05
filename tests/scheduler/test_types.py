@@ -1,8 +1,3 @@
-# pylint: disable=missing-module-docstring
-# pylint: disable=redefined-outer-name
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-# pylint: disable=eval-used
 import copy
 import json
 
@@ -108,7 +103,7 @@ def test_schedule_add_timing_constraints():
     x90_label = sched.add(Rxy(theta=90, phi=0, qubit="q0"), label=test_lab)["label"]
     assert x90_label == test_lab
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="must be unique"):
         x90_label = sched.add(Rxy(theta=90, phi=0, qubit="q0"), label=test_lab)["label"]
 
     uuid_label = sched.add(Rxy(theta=90, phi=0, qubit="q0"))["label"]
@@ -121,15 +116,19 @@ def test_schedule_add_timing_constraints():
     sched.add(Rxy(theta=90, phi=0, qubit="q0"), ref_op=x90_label)
 
     # specifying non-existing label should raise an error
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="does not exist"):
         sched.add(Rxy(theta=90, phi=0, qubit="q0"), ref_op="non-existing-operation")
 
     # specifying schedulable that is not part of the schedule should raise an error
     different_sched = Schedule("not my exp")
-    # This schedulable is intentially given a label that also exists in `sched`
+    # This schedulable is intentionally given a label that also exists in `sched`
     schedulable = different_sched.add(Rxy(theta=90, phi=0, qubit="q0"), label=test_lab)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="does not exist"):
         sched.add(Rxy(theta=90, phi=0, qubit="q0"), ref_op=schedulable)
+
+    op = Rxy(theta=90, phi=0, qubit="q0")
+    with pytest.raises(ValueError, match="does not exist"):
+        sched.add(Rxy(theta=90, phi=0, qubit="q0"), ref_op=op)
 
     assert Schedule.is_valid(sched)
 
@@ -402,6 +401,7 @@ def test_sched_timing_table(
     )
 
 
+@pytest.mark.needs_zhinst
 def test_sched_hardware_timing_table(
     t1_schedule, compile_config_basic_transmon_zhinst_hardware
 ):
@@ -420,6 +420,7 @@ def test_sched_hardware_timing_table(
     assert "waveform_id" in columns_of_hw_timing_table
 
 
+@pytest.mark.needs_zhinst
 def test_sched_hardware_waveform_dict(
     t1_schedule, compile_config_basic_transmon_zhinst_hardware
 ):
@@ -456,7 +457,7 @@ def test_acquisition_metadata():
         # test whether the copy function works correctly
         metadata_copy = copy.copy(metadata)
         assert metadata_copy == metadata
-        assert isinstance(metadata_copy.bin_mode, enums.BinMode)
+        assert enums.BinMode(metadata_copy.bin_mode)
         assert isinstance(metadata_copy.acq_return_type, type)
 
     for return_type in complex, float, int, bool, str, np.ndarray:
@@ -472,7 +473,7 @@ def test_acquisition_metadata():
         # test whether the copy function works correctly
         metadata_copy = copy.copy(metadata)
         assert metadata_copy == metadata
-        assert isinstance(metadata_copy.bin_mode, enums.BinMode)
+        assert enums.BinMode(metadata_copy.bin_mode)
         assert isinstance(metadata_copy.acq_return_type, type)
 
     # Test that json serialization works correctly
@@ -480,5 +481,5 @@ def test_acquisition_metadata():
     # Test that json deserialization works correctly
     metadata_copy = json.loads(serialized, cls=json_utils.SchedulerJSONDecoder)
     assert metadata_copy == metadata
-    assert isinstance(metadata_copy.bin_mode, enums.BinMode)
+    assert enums.BinMode(metadata_copy.bin_mode)
     assert isinstance(metadata_copy.acq_return_type, type)

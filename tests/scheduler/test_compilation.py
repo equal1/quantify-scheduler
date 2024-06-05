@@ -1,7 +1,3 @@
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-
 from copy import deepcopy
 
 import numpy as np
@@ -12,7 +8,16 @@ from quantify_scheduler.backends.circuit_to_device import ConfigKeyError
 from quantify_scheduler.compilation import _determine_absolute_timing, flatten_schedule
 from quantify_scheduler.enums import BinMode
 from quantify_scheduler.operations.control_flow_library import Loop
-from quantify_scheduler.operations.gate_library import CNOT, CZ, X, Measure, Reset, Rxy
+from quantify_scheduler.operations.gate_library import (
+    CNOT,
+    CZ,
+    X,
+    Measure,
+    Reset,
+    Rxy,
+    H,
+)
+from quantify_scheduler.operations.composite_factories import hadamard_as_y90z
 from quantify_scheduler.operations.pulse_library import SquarePulse, SetClockFrequency
 from quantify_scheduler.resources import BasebandClockResource, ClockResource, Resource
 
@@ -133,6 +138,47 @@ def test_compile_transmon_program(mock_setup_basic_transmon_with_standard_params
             "quantum_device"
         ].generate_compilation_config(),
     )
+
+
+def test_compile_gates_to_subschedule(mock_setup_basic_transmon_with_standard_params):
+    compiler = SerialCompiler(name="compiler")
+
+    # Add H composite gate to sched and compile to subschedules
+    sched = Schedule("Schedule")
+    sched.add(H("q0", "q1"))
+    compiled_sched = compiler.compile(
+        sched,
+        mock_setup_basic_transmon_with_standard_params[
+            "quantum_device"
+        ].generate_compilation_config(),
+    )
+
+    # Add H constituent gates Y90 and Z to sched directly as subschedules
+    expected_inner_sched = Schedule("Inner sched H q0 q1")
+    ref_h = expected_inner_sched.add(hadamard_as_y90z("q0"))
+    expected_inner_sched.add(hadamard_as_y90z("q1"), ref_op=ref_h, ref_pt="start")
+
+    expected_sched = Schedule("Expected sched")
+    expected_sched.add(expected_inner_sched)
+
+    expected_compiled_sched = compiler.compile(
+        expected_sched,
+        mock_setup_basic_transmon_with_standard_params[
+            "quantum_device"
+        ].generate_compilation_config(),
+    )
+
+    assert len(compiled_sched) == len(expected_compiled_sched)
+
+    for schedulable, expected_schedulable in zip(
+        compiled_sched.schedulables.values(),
+        expected_compiled_sched.schedulables.values(),
+    ):
+        op = compiled_sched.operations[schedulable["operation_id"]]
+        expected_op = expected_compiled_sched.operations[
+            expected_schedulable["operation_id"]
+        ]
+        assert op == expected_op
 
 
 def test_missing_edge(mock_setup_basic_transmon):
@@ -341,26 +387,34 @@ def test_compile_trace_acquisition(device_compile_config_basic_transmon):
 
 
 def test_compile_weighted_acquisition(
-    device_compile_config_basic_transmon_with_weighted_integration,
+    compile_config_basic_transmon_qblox_hardware_cluster,
 ):
     sched = Schedule("Test schedule")
     q0 = "q0"
+    q1 = "q1"
+
     sched.add(Reset(q0))
     sched.add(Rxy(90, 0, qubit=q0))
     sched.add(
-        Measure(q0, acq_protocol="NumericalWeightedIntegrationComplex"), label="M0"
+        Measure(q0, acq_protocol="NumericalSeparatedWeightedIntegration"), label="M0"
     )
+    sched.add(Measure(q1, acq_protocol="NumericalWeightedIntegration"), label="M1")
 
     compiler = SerialCompiler(name="compile")
     sched = compiler.compile(
         schedule=sched,
-        config=device_compile_config_basic_transmon_with_weighted_integration,
+        config=compile_config_basic_transmon_qblox_hardware_cluster,
     )
 
+    measure_repr = list(sched.schedulables.values())[-2]["operation_id"]
+    assert (
+        sched.operations[measure_repr]["acquisition_info"][0]["protocol"]
+        == "NumericalSeparatedWeightedIntegration"
+    )
     measure_repr = list(sched.schedulables.values())[-1]["operation_id"]
     assert (
         sched.operations[measure_repr]["acquisition_info"][0]["protocol"]
-        == "WeightedIntegratedComplex"
+        == "NumericalWeightedIntegration"
     )
 
 
@@ -370,12 +424,7 @@ def test_compile_no_device_cfg_determine_absolute_timing(
     sched = Schedule("One pulse schedule")
     sched.add(SquarePulse(amp=1 / 4, duration=12e-9, port="q0:mw", clock="q0.01"))
 
-    # Function is defined in quantify_scheduler.compilation, but imported in
-    # quantum_device. The import makes a copy, therefore this is the path that
-    # is patched by mocker.
-    mock = mocker.patch(
-        "quantify_scheduler.device_under_test.quantum_device._determine_absolute_timing"
-    )
+    mock = mocker.patch("quantify_scheduler.compilation._determine_absolute_timing")
     compiler = SerialCompiler(name="compile")
     compiler.compile(schedule=sched, config=device_compile_config_basic_transmon)
     assert mock.is_called()
@@ -433,7 +482,7 @@ def test_determine_absolute_timing_subschedule():
     abs_times = [
         constr["abs_time"] for constr in timed_sched.data["schedulables"].values()
     ]
-    assert abs_times == [0, 3, 3, 1, 2]
+    assert abs_times == [0, 1, 2, 3, 3]
 
 
 def test_flatten_schedule():
@@ -476,6 +525,12 @@ def test_flatten_schedule_gets_all_resources(
         "cl0.baseband": {
             "name": "cl0.baseband",
             "type": "BasebandClockResource",
+            "freq": 0,
+            "phase": 0,
+        },
+        "digital": {
+            "name": "digital",
+            "type": "DigitalClockResource",
             "freq": 0,
             "phase": 0,
         },

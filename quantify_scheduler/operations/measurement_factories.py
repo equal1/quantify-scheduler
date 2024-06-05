@@ -17,6 +17,8 @@ import numpy as np
 from quantify_scheduler import Operation
 from quantify_scheduler.enums import BinMode
 from quantify_scheduler.operations.acquisition_library import (
+    NumericalSeparatedWeightedIntegration,
+    NumericalWeightedIntegration,
     NumericalWeightedIntegrationComplex,
     SSBIntegrationComplex,
     ThresholdedAcquisition,
@@ -30,8 +32,6 @@ from quantify_scheduler.operations.pulse_library import (
 )
 
 
-# pylint: disable=too-many-arguments
-# pylint: disable=unused-argument
 def dispersive_measurement(
     pulse_amp: float,
     pulse_duration: float,
@@ -42,27 +42,16 @@ def dispersive_measurement(
     acq_channel: Hashable,
     acq_channel_override: Hashable | None,
     acq_index: int,
-    acq_protocol: Literal[
-        "SSBIntegrationComplex",
-        "Trace",
-        "NumericalWeightedIntegrationComplex",
-        "ThresholdedAcquisition",
-    ]
-    | None,
+    acq_protocol: str | None,
     pulse_type: Literal["SquarePulse"] = "SquarePulse",
     bin_mode: BinMode | None = BinMode.AVERAGE,
-    acq_protocol_default: Literal[
-        "SSBIntegrationComplex",
-        "Trace",
-        "NumericalWeightedIntegrationComplex",
-        "ThresholdedAcquisition",
-    ] = "SSBIntegrationComplex",
+    acq_protocol_default: str = "SSBIntegrationComplex",
     reset_clock_phase: bool = True,
     reference_magnitude: Optional[ReferenceMagnitude] = None,
     acq_weights_a: List[complex] | np.ndarray | None = None,
     acq_weights_b: List[complex] | np.ndarray | None = None,
     acq_weights_sampling_rate: float | None = None,
-    # The following are set during _compile_circuit_to_device
+    feedback_trigger_label: Optional[str] = None,
     acq_rotation: float | None = None,
     acq_threshold: float | None = None,
 ) -> Operation:
@@ -125,7 +114,11 @@ def dispersive_measurement(
                 t0=acq_delay,
             )
         )
-    elif acq_protocol == "NumericalWeightedIntegrationComplex":
+    elif acq_protocol in (
+        "NumericalSeparatedWeightedIntegration",
+        "NumericalWeightedIntegration",
+        "NumericalWeightedIntegrationComplex",
+    ):
         if (
             acq_weights_a is None
             or acq_weights_b is None
@@ -147,19 +140,48 @@ def dispersive_measurement(
                 f"ignored for weighted acquisition.",
                 UserWarning,
             )
-        device_op.add_acquisition(
-            NumericalWeightedIntegrationComplex(
-                port=port,
-                clock=clock,
-                weights_a=acq_weights_a,
-                weights_b=acq_weights_b,
-                weights_sampling_rate=acq_weights_sampling_rate,
-                acq_channel=acq_channel,
-                acq_index=acq_index,
-                bin_mode=bin_mode,
-                t0=acq_delay,
+        if acq_protocol == "NumericalSeparatedWeightedIntegration":
+            device_op.add_acquisition(
+                NumericalSeparatedWeightedIntegration(
+                    port=port,
+                    clock=clock,
+                    weights_a=acq_weights_a,
+                    weights_b=acq_weights_b,
+                    weights_sampling_rate=acq_weights_sampling_rate,
+                    acq_channel=acq_channel,
+                    acq_index=acq_index,
+                    bin_mode=bin_mode,
+                    t0=acq_delay,
+                )
             )
-        )
+        elif acq_protocol == "NumericalWeightedIntegration":
+            device_op.add_acquisition(
+                NumericalWeightedIntegration(
+                    port=port,
+                    clock=clock,
+                    weights_a=acq_weights_a,
+                    weights_b=acq_weights_b,
+                    weights_sampling_rate=acq_weights_sampling_rate,
+                    acq_channel=acq_channel,
+                    acq_index=acq_index,
+                    bin_mode=bin_mode,
+                    t0=acq_delay,
+                )
+            )
+        elif acq_protocol == "NumericalWeightedIntegrationComplex":
+            device_op.add_acquisition(
+                NumericalWeightedIntegrationComplex(
+                    port=port,
+                    clock=clock,
+                    weights_a=acq_weights_a,
+                    weights_b=acq_weights_b,
+                    weights_sampling_rate=acq_weights_sampling_rate,
+                    acq_channel=acq_channel,
+                    acq_index=acq_index,
+                    bin_mode=bin_mode,
+                    t0=acq_delay,
+                )
+            )
     elif acq_protocol == "ThresholdedAcquisition":
         device_op.add_acquisition(
             ThresholdedAcquisition(
@@ -170,6 +192,9 @@ def dispersive_measurement(
                 acq_index=acq_index,
                 bin_mode=bin_mode,
                 t0=acq_delay,
+                feedback_trigger_label=feedback_trigger_label,
+                acq_rotation=acq_rotation,
+                acq_threshold=acq_threshold,
             )
         )
     elif acq_protocol == "Trace":
@@ -206,7 +231,6 @@ def optical_measurement(
     acq_protocol_default: Literal["Trace", "TriggerCount"],
     pulse_type: Literal["SquarePulse"],
 ) -> Operation:
-    # pylint: disable=too-many-locals
     """
     Generator function for an optical measurement with multiple excitation pulses.
 

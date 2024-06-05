@@ -1,14 +1,7 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
 """Tests for virtual strategy module."""
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-# pylint: disable=redefined-outer-name
-# pylint: disable=unused-argument
-# pylint: disable=no-self-use
-# pylint: disable=too-many-locals
-# pylint: disable=too-many-arguments
+
 
 from contextlib import nullcontext
 from typing import Tuple
@@ -18,7 +11,7 @@ import pytest
 from quantify_scheduler.backends.types import qblox as types
 from quantify_scheduler.backends.qblox import constants
 from quantify_scheduler.backends.qblox import q1asm_instructions
-from quantify_scheduler.backends.qblox.instrument_compilers import QcmModule
+from quantify_scheduler.backends.qblox.instrument_compilers import QCMCompiler
 from quantify_scheduler.backends.qblox.operation_handling.base import IOperationStrategy
 from quantify_scheduler.backends.qblox.operation_handling import virtual
 from quantify_scheduler.backends.qblox.qasm_program import QASMProgram
@@ -30,7 +23,7 @@ from quantify_scheduler.operations.pulse_library import SetClockFrequency
 @pytest.fixture(name="empty_qasm_program_qcm")
 def fixture_empty_qasm_program():
     yield QASMProgram(
-        static_hw_properties=QcmModule.static_hw_properties,
+        static_hw_properties=QCMCompiler.static_hw_properties,
         register_manager=RegisterManager(),
         align_fields=True,
         acq_metadata=None,
@@ -38,7 +31,7 @@ def fixture_empty_qasm_program():
 
 
 def _assert_none_data(strategy: IOperationStrategy):
-    # pylint: disable=assignment-from-none
+
     # this is what we want to verify
     data = strategy.generate_data({})
 
@@ -154,7 +147,9 @@ class TestAwgOffsetStrategy:
             "offset_path_I": 0.4,
             "offset_path_Q": 0,
         }
-        expected_qasm = [["", "set_awg_offs", "13107,0", ""]]
+        expected_qasm = [
+            ["", "set_awg_offs", "13107,0", "# setting offset for test_pulse"]
+        ]
 
         qasm = empty_qasm_program_qcm
         duration = 24e-9
@@ -239,8 +234,6 @@ class TestNcoSetClockFrequencyStrategy:
                 (
                     "set_freq",
                     f"{round((interm_freq_old + clock_freq_new - clock_freq_old)*4)}",
-                    "upd_param",
-                    "8",
                 ),
             )
             for clock_freq_new in [-2e9, 0, 600]
@@ -253,17 +246,15 @@ class TestNcoSetClockFrequencyStrategy:
         clock_freq_new: float,
         clock_freq_old: float,
         interm_freq_old: float,
-        expected_instruction: Tuple[str, str, str, str],
+        expected_instruction: Tuple[str, str],
         empty_qasm_program_qcm: QASMProgram,
     ):
         def extract_instruction_and_args(
             qasm_prog: QASMProgram,
-        ) -> Tuple[str, str, str, str]:
+        ) -> Tuple[str, str]:
             return (
                 qasm_prog.instructions[0][1],
                 qasm_prog.instructions[0][2],
-                qasm_prog.instructions[1][1],
-                qasm_prog.instructions[1][2],
             )
 
         # arrange

@@ -333,8 +333,9 @@ This is schematically shown in {numref}`compilation_overview`.
 
 A schematic overview of the different abstraction layers and the compilation process.
 Both a quantum circuit, consisting of gates and measurements of qubits, and timed sequences of control pulses are represented as a {class}`.Schedule` .
-The information specified in the {ref}`device configuration<sec-device-config>` is used during compilation to add information on how to represent {class}`.Operation` s specified at the quantum-circuit level as control pulses.
+The information specified in the {ref}`device configuration<sec-device-config>` is used during compilation to add information on how to represent {class}`.Operation` s specified at the quantum-circuit layer as pulses and acquisitions at the quantum-device layer.
 The information in the {ref}`hardware description <sec-hardware-description>`, {ref}`hardware options <sec-hardware-options>`, and {ref}`connectivity <sec-connectivity>` is then used to compile the control pulses into instructions suitable for hardware execution.
+Once executed on the hardware, a dataset is returned to the user. 
 ```
 
 In the first compilation step, pulse information is added to all operations that are not valid pulses (see {attr}`.Operation.valid_pulse`) based on the information specified in the {ref}`sec-device-config`.
@@ -467,7 +468,7 @@ Several utility instruments are used to control the flow of the experiments.
 
 ### Physical instruments
 
-[QCoDeS instrument drivers](https://qcodes.github.io/Qcodes/drivers_api/index.html) are used to represent the physical hardware.
+[QCoDeS instrument drivers](https://microsoft.github.io/Qcodes/drivers_api/index.html) are used to represent the physical hardware.
 For the purpose of quantify-scheduler, these instruments are treated as stateless, the desired configurations for an experiment being described by the compiled instructions.
 Because the instruments correspond to physical hardware, there is a significant overhead in querying and configuring these parameters.
 As such, the state of the instruments in the software is intended to track the state of the physical hardware to facilitate lazy configuration and logging purposes.
@@ -488,6 +489,7 @@ The {class}`~quantify_scheduler.device_under_test.quantum_device.QuantumDevice` 
 
 Because the {class}`~quantify_scheduler.device_under_test.quantum_device.QuantumDevice` and the {code}`DeviceElement`s are an {class}`~qcodes.instrument.base.Instrument`, the parameters used to generate the configuration files can be easily managed and are stored in the snapshot containing the experiment's metadata.
 
+(sec-user-guide-experiment-flow)=
 ## Experiment flow
 
 To use schedules in an experimental setting, in which the parameters used for compilation as well as the schedules themselves routinely change, we provide a framework for performing experiments making use of the concepts of `quantify-core`.

@@ -10,12 +10,13 @@ from typing import (
     Any,
     Callable,
     Dict,
-    Iterable,
+    List,
     Literal,
     Optional,
     Tuple,
     TypeVar,
     Union,
+    get_args,
 )
 
 from dataclasses_json import DataClassJsonMixin
@@ -23,11 +24,19 @@ from pydantic import Field, field_validator
 from typing_extensions import Annotated
 
 from quantify_scheduler.backends.qblox import constants, q1asm_instructions
+from quantify_scheduler.backends.qblox.enums import (
+    DistortionCorrectionLatencyEnum,
+    QbloxFilterConfig,
+    QbloxFilterMarkerDelay,
+)
 from quantify_scheduler.backends.types.common import (
+    Connectivity,
     HardwareDescription,
+    HardwareDistortionCorrection,
     HardwareOptions,
     IQMixerDescription,
     LocalOscillatorDescription,
+    SoftwareDistortionCorrection,
 )
 from quantify_scheduler.structure.model import DataStructure
 
@@ -52,13 +61,41 @@ class StaticHardwareProperties:
     """The type of instrument."""
     max_sequencers: int
     """The amount of sequencers available."""
+    channel_name_to_connected_io_indices: Dict[str, tuple[int, ...]]
+    """Specifies the connected io indices per channel_name identifier."""
+
+    def _get_connected_output_indices(self, channel_name) -> tuple[int, ...]:
+        """
+        Return the connected output indices associated with the output name
+        specified in the hardware config.
+        """
+        return (
+            self.channel_name_to_connected_io_indices[channel_name]
+            if "output" in channel_name
+            else ()
+        )
+
+    def _get_connected_input_indices(self, channel_name) -> tuple[int, ...]:
+        """
+        Return the connected input indices associated with the input name
+        specified in the hardware config.
+        """
+        return (
+            self.channel_name_to_connected_io_indices[channel_name]
+            if "input" in channel_name
+            else ()
+        )
+
+
+@dataclass(frozen=True)
+class StaticAnalogModuleProperties(StaticHardwareProperties):
+    """Specifies the fixed hardware properties needed in the backend for QRM/QCM modules."""
+
     max_awg_output_voltage: Optional[float]
     """Maximum output voltage of the awg."""
     mixer_dc_offset_range: BoundedParameter
     """Specifies the range over which the dc offsets can be set that are used for mixer
     calibration."""
-    channel_name_to_connected_io_indices: Dict[str, Union[Tuple[int], Tuple[int, int]]]
-    """Specifies the connected io indices per channel_name identifier."""
     default_marker: int = 0
     """The default marker value to set at the beginning of programs.
     Important for RF instruments that use the set_mrk command to enable/disable the RF output."""
@@ -69,36 +106,10 @@ class StaticHardwareProperties:
     Specifies which marker bit needs to be set at start if the
     output (as a string ex. `complex_output_0`) contains a pulse."""
 
-    @property
-    def valid_channels(self) -> Iterable[str]:
-        """Specifies the channel_name identifiers supported by this instrument."""
-        return self.channel_name_to_connected_io_indices.keys()
 
-    def _get_connected_output_indices(
-        self, channel_name
-    ) -> Optional[Union[Tuple[int], Tuple[int, int], None]]:
-        """
-        Return the connected output indices associated with the output name
-        specified in the hardware config.
-        """
-        return (
-            self.channel_name_to_connected_io_indices[channel_name]
-            if "output" in channel_name
-            else None
-        )
-
-    def _get_connected_input_indices(
-        self, channel_name
-    ) -> Optional[Union[Tuple[int], Tuple[int, int], None]]:
-        """
-        Return the connected input indices associated with the input name
-        specified in the hardware config.
-        """
-        return (
-            self.channel_name_to_connected_io_indices[channel_name]
-            if "input" in channel_name
-            else None
-        )
+@dataclass(frozen=True)
+class StaticTimetagModuleProperties(StaticHardwareProperties):
+    """Specifies the fixed hardware properties needed in the backend for QTM modules."""
 
 
 @dataclass(frozen=True)
@@ -148,6 +159,27 @@ class OpInfo(DataClassJsonMixin):
         corresponding to the Q1ASM instruction ``set_awg_offset``.
         """
         return "offset_path_I" in self.data or "offset_path_Q" in self.data
+
+    @property
+    def is_parameter_instruction(self) -> bool:
+        """
+        Return ``True`` if the instruction is a parameter, like a voltage offset.
+
+        From the Qblox documentation: "parameter operation instructions" are latched and
+        only updated when the upd_param, play, acquire, acquire_weighed or acquire_ttl
+        instructions are executed.
+
+        Please refer to
+        https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/cluster/q1_sequence_processor.html#q1-instructions
+        for the full list of these instructions.
+        """
+        return (
+            self.is_offset_instruction
+            or "phase_shift" in self.data
+            or "reset_clock_phase" in self.data
+            or "clock_freq_new" in self.data
+            or "marker_pulse" in self.data
+        )
 
     @property
     def is_parameter_update(self) -> bool:
@@ -240,6 +272,48 @@ class LOSettings(DataClassJsonMixin):
         return cls(power=power_entry, frequency=freq_entry)
 
 
+_ModuleSettingsT = TypeVar("_ModuleSettingsT", bound="BaseModuleSettings")
+"""
+Custom type to allow correct type inference from ``extract_settings_from_mapping`` for
+child classes.
+"""
+
+
+@dataclass
+class QbloxRealTimeFilter(DataClassJsonMixin):
+    """An individual real time filter on Qblox hardware."""
+
+    coeffs: Optional[Union[float, List[float]]] = None
+    """Coefficient(s) of the filter.
+       Can be None if there is no filter
+       or if it is inactive."""
+    config: QbloxFilterConfig = QbloxFilterConfig.BYPASSED
+    """Configuration of the filter.
+       One of 'BYPASSED', 'ENABLED',
+       or 'DELAY_COMP'."""
+    marker_delay: QbloxFilterMarkerDelay = QbloxFilterMarkerDelay.BYPASSED
+    """State of the marker delay.
+       One of 'BYPASSED' or 'ENABLED'."""
+
+
+@dataclass
+class DistortionSettings(DataClassJsonMixin):
+    """Distortion correction settings for all Qblox modules."""
+
+    bt: QbloxRealTimeFilter = dataclasses_field(default_factory=QbloxRealTimeFilter)
+    """The bias tee correction filter."""
+    exp0: QbloxRealTimeFilter = dataclasses_field(default_factory=QbloxRealTimeFilter)
+    """The exponential overshoot correction 1 filter."""
+    exp1: QbloxRealTimeFilter = dataclasses_field(default_factory=QbloxRealTimeFilter)
+    """The exponential overshoot correction 2 filter."""
+    exp2: QbloxRealTimeFilter = dataclasses_field(default_factory=QbloxRealTimeFilter)
+    """The exponential overshoot correction 3 filter."""
+    exp3: QbloxRealTimeFilter = dataclasses_field(default_factory=QbloxRealTimeFilter)
+    """The exponential overshoot correction 4 filter."""
+    fir: QbloxRealTimeFilter = dataclasses_field(default_factory=QbloxRealTimeFilter)
+    """The FIR filter."""
+
+
 @dataclass
 class BaseModuleSettings(DataClassJsonMixin):
     """Shared settings between all the Qblox modules."""
@@ -256,24 +330,18 @@ class BaseModuleSettings(DataClassJsonMixin):
     """The gain of input 0."""
     in1_gain: Optional[int] = None
     """The gain of input 1."""
-
-
-@dataclass
-class BasebandModuleSettings(BaseModuleSettings):
-    """
-    Settings for a baseband module.
-
-    Class exists to ensure that the cluster baseband modules don't need special
-    treatment in the rest of the code.
-    """
+    distortion_corrections: List[DistortionSettings] = dataclasses_field(
+        default_factory=lambda: [DistortionSettings() for _ in range(4)]
+    )
+    """distortion correction settings"""
 
     @classmethod
     def extract_settings_from_mapping(
-        cls, mapping: Dict[str, Any], **kwargs: Optional[dict]
-    ) -> BasebandModuleSettings:
+        cls: type[_ModuleSettingsT], mapping: Dict[str, Any], **kwargs: Optional[dict]
+    ) -> _ModuleSettingsT:
         """
         Factory method that takes all the settings defined in the mapping and generates
-        a :class:`~.BasebandModuleSettings` object from it.
+        an instance of this class.
 
         Parameters
         ----------
@@ -288,48 +356,39 @@ class BasebandModuleSettings(BaseModuleSettings):
 
 
 @dataclass
-class PulsarSettings(BaseModuleSettings):
-    """
-    Global settings for the Pulsar to be set in the InstrumentCoordinator component.
-    This is kept separate from the settings that can be set on a per sequencer basis,
-    which are specified in :class:`~.SequencerSettings`.
-    """
+class AnalogModuleSettings(BaseModuleSettings):
+    """Shared settings between all QCM/QRM modules."""
 
-    ref: str = "internal"
-    """The reference source. Should either be ``"internal"`` or ``"external"``, will
-    raise an exception in the instrument coordinator component otherwise."""
-
-    @classmethod
-    def extract_settings_from_mapping(
-        cls, mapping: Dict[str, Any], **kwargs: Optional[dict]
-    ) -> PulsarSettings:
-        """
-        Factory method that takes all the settings defined in the mapping and generates
-        a :class:`~.PulsarSettings` object from it.
-
-        Parameters
-        ----------
-        mapping
-            The mapping dict to extract the settings from
-        **kwargs
-            Additional keyword arguments passed to the constructor. Can be used to
-            override parts of the mapping dict.
-        """
-        ref: str = mapping["ref"]
-        if ref != "internal" and ref != "external":
-            raise ValueError(
-                f"Attempting to configure ref to {ref}. "
-                f"The only allowed values are 'internal' and 'external'."
-            )
-        return cls(ref=ref, **kwargs)
+    offset_ch0_path_I: Optional[float] = None
+    """The DC offset on the path_I of channel 0."""
+    offset_ch0_path_Q: Optional[float] = None
+    """The DC offset on the path_Q of channel 0."""
+    offset_ch1_path_I: Optional[float] = None
+    """The DC offset on path_I of channel 1."""
+    offset_ch1_path_Q: Optional[float] = None
+    """The DC offset on path_Q of channel 1."""
+    in0_gain: Optional[int] = None
+    """The gain of input 0."""
+    in1_gain: Optional[int] = None
+    """The gain of input 1."""
 
 
 @dataclass
-class RFModuleSettings(BaseModuleSettings):
+class BasebandModuleSettings(AnalogModuleSettings):
+    """
+    Settings for a baseband module.
+
+    Class exists to ensure that the cluster baseband modules don't need special
+    treatment in the rest of the code.
+    """
+
+
+@dataclass
+class RFModuleSettings(AnalogModuleSettings):
     """
     Global settings for the module to be set in the InstrumentCoordinator component.
     This is kept separate from the settings that can be set on a per sequencer basis,
-    which are specified in :class:`~.SequencerSettings`.
+    which are specified in :class:`~.AnalogSequencerSettings`.
     """
 
     lo0_freq: Optional[float] = None
@@ -375,8 +434,93 @@ class RFModuleSettings(BaseModuleSettings):
 
 
 @dataclass
+class TimetagModuleSettings(BaseModuleSettings):
+    """
+    Global settings for the module to be set in the InstrumentCoordinator component.
+    This is kept separate from the settings that can be set on a per sequencer basis,
+    which are specified in :class:`~.TimetagSequencerSettings`.
+    """
+
+
+@dataclass
 class SequencerSettings(DataClassJsonMixin):
-    # pylint: disable=too-many-instance-attributes
+    """
+    Sequencer level settings.
+
+    In the Qblox driver these settings are typically recognized by parameter names of
+    the form ``"{module}.sequencer{index}.{setting}"`` (for allowed values see
+    `Cluster QCoDeS parameters
+    <https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/api_reference/sequencer.html#cluster-qcodes-parameters>`__).
+    These settings are set once and will remain unchanged after, meaning that these
+    correspond to the "slow" QCoDeS parameters and not settings that are changed
+    dynamically by the sequencer.
+
+    These settings are mostly defined in the hardware configuration under each
+    port-clock key combination or in some cases through the device configuration
+    (e.g. parameters related to thresholded acquisition).
+    """
+
+    sync_en: bool
+    """Enables party-line synchronization."""
+    channel_name: str
+    """Specifies the channel identifier of the hardware config (e.g. `complex_output_0`)."""
+    connected_output_indices: Tuple[int, ...]
+    """Specifies the indices of the outputs this sequencer produces waveforms for."""
+    connected_input_indices: Tuple[int, ...]
+    """Specifies the indices of the inputs this sequencer collects data for."""
+    sequence: Optional[Dict[str, Any]] = None
+    """JSON compatible dictionary holding the waveforms and program for the
+    sequencer."""
+    seq_fn: Optional[str] = None
+    """Filename of JSON file containing a dump of the waveforms and program."""
+    thresholded_acq_trigger_address: Optional[int] = None
+    """Sets the feedback trigger address to be used by conditional playback."""
+    thresholded_acq_trigger_en: Optional[bool] = None
+    """Enables the sequencer to record acquisitions."""
+    thresholded_acq_trigger_invert: bool = False
+    """
+    If you want to set a trigger when the acquisition result is 1, the parameter must be set to false 
+    and vice versa.
+    """
+
+    @classmethod
+    def initialize_from_config_dict(
+        cls,
+        sequencer_cfg: Dict[str, Any],  # noqa: ARG003 ignore unused argument
+        channel_name: str,
+        connected_output_indices: tuple[int, ...],
+        connected_input_indices: tuple[int, ...],
+    ) -> SequencerSettings:
+        """
+        Instantiates an instance of this class, with initial parameters determined from
+        the sequencer configuration dictionary.
+
+        Parameters
+        ----------
+        sequencer_cfg : dict
+            The sequencer configuration dict.
+        channel_name
+            Specifies the channel identifier of the hardware config (e.g. `complex_output_0`).
+        connected_output_indices
+            Specifies the indices of the outputs this sequencer produces waveforms for.
+        connected_input_indices
+            Specifies the indices of the inputs this sequencer collects data for.
+
+        Returns
+        -------
+        : SequencerSettings
+            A SequencerSettings instance with initial values.
+        """
+        return cls(
+            sync_en=True,
+            channel_name=channel_name,
+            connected_output_indices=connected_output_indices,
+            connected_input_indices=connected_input_indices,
+        )
+
+
+@dataclass
+class AnalogSequencerSettings(SequencerSettings):
     """
     Sequencer level settings.
 
@@ -393,16 +537,8 @@ class SequencerSettings(DataClassJsonMixin):
     (e.g. parameters related to thresholded acquisition).
     """
 
-    nco_en: bool
+    nco_en: bool = False
     """Specifies whether the NCO will be used or not."""
-    sync_en: bool
-    """Enables party-line synchronization."""
-    channel_name: str
-    """Specifies the channel identifier of the hardware config (e.g. `complex_output_0`)."""
-    connected_output_indices: Optional[Union[Tuple[int], Tuple[int, int]]]
-    """Specifies the indices of the outputs this sequencer produces waveforms for."""
-    connected_input_indices: Optional[Union[Tuple[int], Tuple[int, int]]]
-    """Specifies the indices of the inputs this sequencer collects data for."""
     init_offset_awg_path_I: float = 0.0
     """Specifies what value the sequencer offset for AWG path_I will be reset to
     before the start of the experiment."""
@@ -425,11 +561,6 @@ class SequencerSettings(DataClassJsonMixin):
     paths of the mixer."""
     integration_length_acq: Optional[int] = None
     """Integration length for acquisitions. Must be a multiple of 4 ns."""
-    sequence: Optional[Dict[str, Any]] = None
-    """JSON compatible dictionary holding the waveforms and program for the
-    sequencer."""
-    seq_fn: Optional[str] = None
-    """Filename of JSON file containing a dump of the waveforms and program."""
     thresholded_acq_threshold: Optional[float] = None
     """The sequencer discretization threshold for discretizing the phase rotation result."""
     thresholded_acq_rotation: Optional[float] = None
@@ -446,9 +577,9 @@ class SequencerSettings(DataClassJsonMixin):
         cls,
         sequencer_cfg: Dict[str, Any],
         channel_name: str,
-        connected_output_indices: Optional[Union[Tuple[int], Tuple[int, int]]],
-        connected_input_indices: Optional[Union[Tuple[int], Tuple[int, int]]],
-    ) -> SequencerSettings:
+        connected_output_indices: tuple[int, ...],
+        connected_input_indices: tuple[int, ...],
+    ) -> AnalogSequencerSettings:
         """
         Instantiates an instance of this class, with initial parameters determined from
         the sequencer configuration dictionary.
@@ -466,15 +597,15 @@ class SequencerSettings(DataClassJsonMixin):
 
         Returns
         -------
-        : SequencerSettings
-            A SequencerSettings instance with initial values.
+        : AnalogSequencerSettings
+            A AnalogSequencerSettings instance with initial values.
         """
         T = TypeVar("T", int, float)
 
         def extract_and_verify_range(
             param_name: str,
             settings: Dict[str, Any],
-            default_value: T,
+            default_value: T | None,
             min_value: T,
             max_value: T,
         ) -> T:
@@ -490,7 +621,7 @@ class SequencerSettings(DataClassJsonMixin):
                 )
             return val
 
-        modulation_freq: Optional[float] = sequencer_cfg.get("interm_freq", None)
+        modulation_freq: Optional[float] = sequencer_cfg.get("interm_freq")
         nco_en: bool = (
             modulation_freq is not None and modulation_freq != 0
         )  # Allow NCO to be permanently disabled via `"interm_freq": 0` in the hardware config
@@ -559,9 +690,9 @@ class SequencerSettings(DataClassJsonMixin):
             max_value=constants.MAX_PHASE_ROTATION_ACQ,
         )
 
-        ttl_acq_threshold = sequencer_cfg.get("ttl_acq_threshold", None)
+        ttl_acq_threshold = sequencer_cfg.get("ttl_acq_threshold")
 
-        sequencer_settings = cls(
+        return cls(
             nco_en=nco_en,
             sync_en=True,
             channel_name=channel_name,
@@ -578,7 +709,60 @@ class SequencerSettings(DataClassJsonMixin):
             thresholded_acq_threshold=thresholded_acq_threshold,
             ttl_acq_threshold=ttl_acq_threshold,
         )
-        return sequencer_settings
+
+
+@dataclass
+class TimetagSequencerSettings(SequencerSettings):
+    """
+    Sequencer level settings.
+
+    In the Qblox driver these settings are typically recognized by parameter names of
+    the form ``"{module}.sequencer{index}.{setting}"`` (for allowed values see
+    `Cluster QCoDeS parameters
+    <https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/api_reference/sequencer.html#cluster-qcodes-parameters>`__).
+    These settings are set once and will remain unchanged after, meaning that these
+    correspond to the "slow" QCoDeS parameters and not settings that are changed
+    dynamically by the sequencer.
+
+    These settings are mostly defined in the hardware configuration under each
+    port-clock key combination or in some cases through the device configuration
+    (e.g. parameters related to thresholded acquisition).
+    """
+
+    @classmethod
+    def initialize_from_config_dict(
+        cls,
+        sequencer_cfg: Dict[str, Any],  # noqa: ARG003 ignore unused argument
+        channel_name: str,
+        connected_output_indices: tuple[int, ...],
+        connected_input_indices: tuple[int, ...],
+    ) -> TimetagSequencerSettings:
+        """
+        Instantiates an instance of this class, with initial parameters determined from
+        the sequencer configuration dictionary.
+
+        Parameters
+        ----------
+        sequencer_cfg : dict
+            The sequencer configuration dict.
+        channel_name
+            Specifies the channel identifier of the hardware config (e.g. `complex_output_0`).
+        connected_output_indices
+            Specifies the indices of the outputs this sequencer produces waveforms for.
+        connected_input_indices
+            Specifies the indices of the inputs this sequencer collects data for.
+
+        Returns
+        -------
+        : SequencerSettings
+            A SequencerSettings instance with initial values.
+        """
+        return cls(
+            sync_en=True,
+            channel_name=channel_name,
+            connected_output_indices=connected_output_indices,
+            connected_input_indices=connected_input_indices,
+        )
 
 
 class QbloxBaseDescription(HardwareDescription):
@@ -605,6 +789,12 @@ class ComplexChannelDescription(DataStructure):
     Downconverter frequency that should be taken into account when determining the modulation frequencies for this channel.
     Only relevant for users with custom Qblox downconverter hardware.
     """
+    distortion_correction_latency_compensation: int = (
+        DistortionCorrectionLatencyEnum.NO_DELAY_COMP
+    )
+    """
+    Delay compensation setting that either delays the signal by the amount chosen by the settings or not.
+    """
 
 
 class RealChannelDescription(DataStructure):
@@ -615,17 +805,53 @@ class RealChannelDescription(DataStructure):
     Setting to send 4 ns trigger pulse on the marker located next to the I/O port along with each operation.
     The marker will be pulled high at the same time as the module starts playing or acquiring.
     """
+    distortion_correction_latency_compensation: int = (
+        DistortionCorrectionLatencyEnum.NO_DELAY_COMP
+    )
+    """
+    Delay compensation setting that either delays the signal by the amount chosen by the settings or not.
+    """
 
 
 class DigitalChannelDescription(DataStructure):
+    """Information needed to specify a digital (marker) output (for :class:`~.quantify_scheduler.operations.pulse_library.MarkerPulse`) in the :class:`~.quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig`."""
+
+    distortion_correction_latency_compensation: int = (
+        DistortionCorrectionLatencyEnum.NO_DELAY_COMP
+    )
     """
-    Information needed to specify a digital (marker) output (for :class:`~.quantify_scheduler.operations.pulse_library.MarkerPulse`) in the :class:`~.quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig`.
-
-    This datastructure is currently empty, since no extra settings are needed/allowed for a digital output.
+    Delay compensation setting that either delays the signal by the amount chosen by the settings or not.
     """
 
 
-class QRMDescription(DataStructure):
+class DescriptionAnnotationsGettersMixin:
+    """Provide the functionality of retrieving valid channel names by inheriting this class."""
+
+    @classmethod
+    def get_valid_channels(cls) -> List[str]:
+        """Return all the valid channel names for this hardware description."""
+        channel_description_types = [
+            ComplexChannelDescription.__name__,
+            RealChannelDescription.__name__,
+            DigitalChannelDescription.__name__,
+        ]
+
+        channel_names = []
+        for description_name, description_type in cls.__annotations__.items():
+            for channel_description_type in channel_description_types:
+                if channel_description_type in description_type:
+                    channel_names.append(description_name)
+                    break
+
+        return channel_names
+
+    @classmethod
+    def get_instrument_type(cls) -> str:
+        """Return the instrument type indicated in this hardware description."""
+        return get_args(cls.model_fields["instrument_type"].annotation)[0]
+
+
+class QRMDescription(DataStructure, DescriptionAnnotationsGettersMixin):
     """Information needed to specify a QRM in the :class:`~.quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig`."""
 
     instrument_type: Literal["QRM"]
@@ -654,7 +880,7 @@ class QRMDescription(DataStructure):
     """Description of the digital (marker) output channel on this QRM, corresponding to port M4."""
 
 
-class QCMDescription(DataStructure):
+class QCMDescription(DataStructure, DescriptionAnnotationsGettersMixin):
     """Information needed to specify a QCM in the :class:`~.quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig`."""
 
     instrument_type: Literal["QCM"]
@@ -683,7 +909,7 @@ class QCMDescription(DataStructure):
     """Description of the digital (marker) output channel on this QRM, corresponding to port M4."""
 
 
-class QRMRFDescription(DataStructure):
+class QRMRFDescription(DataStructure, DescriptionAnnotationsGettersMixin):
     """Information needed to specify a QRM-RF in the :class:`~.quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig`."""
 
     instrument_type: Literal["QRM_RF"]
@@ -700,7 +926,7 @@ class QRMRFDescription(DataStructure):
     """Description of the digital (marker) output channel on this QRM, corresponding to port M2."""
 
 
-class QCMRFDescription(DataStructure):
+class QCMRFDescription(DataStructure, DescriptionAnnotationsGettersMixin):
     """Information needed to specify a QCM-RF in the :class:`~.quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig`."""
 
     instrument_type: Literal["QCM_RF"]
@@ -737,69 +963,13 @@ class ClusterDescription(QbloxBaseDescription):
 
     instrument_type: Literal["Cluster"]
     """The instrument type, used to select this datastructure when parsing a :class:`~.CompilationConfig`."""
-    modules: Dict[int, ClusterModuleDescription]
+    modules: Dict[int, ClusterModuleDescription] = {}
     """Description of the modules of this Cluster, using slot index as key."""
-
-
-class PulsarQCMDescription(QbloxBaseDescription):
-    """Information needed to specify a Pulsar QCM in the :class:`~.CompilationConfig`."""
-
-    instrument_type: Literal["Pulsar_QCM"]
-    """The instrument type, used to select this datastructure when parsing a :class:`~.CompilationConfig`."""
-    complex_output_0: Optional[ComplexChannelDescription] = None
-    """Description of the complex output channel on this QRM, corresponding to ports O1 and O2."""
-    complex_output_1: Optional[ComplexChannelDescription] = None
-    """Description of the complex output channel on this QRM, corresponding to ports O3 and O4."""
-    real_output_0: Optional[RealChannelDescription] = None
-    """Description of the real output channel on this QRM, corresponding to port O1."""
-    real_output_1: Optional[RealChannelDescription] = None
-    """Description of the real output channel on this QRM, corresponding to port O2."""
-    real_output_2: Optional[RealChannelDescription] = None
-    """Description of the real output channel on this QRM, corresponding to port O3."""
-    real_output_3: Optional[RealChannelDescription] = None
-    """Description of the real output channel on this QRM, corresponding to port O4."""
-    digital_output_0: Optional[DigitalChannelDescription] = None
-    """Description of the digital (marker) output channel on this QRM, corresponding to port M1."""
-    digital_output_1: Optional[DigitalChannelDescription] = None
-    """Description of the digital (marker) output channel on this QRM, corresponding to port M2."""
-    digital_output_2: Optional[DigitalChannelDescription] = None
-    """Description of the digital (marker) output channel on this QRM, corresponding to port M3."""
-    digital_output_3: Optional[DigitalChannelDescription] = None
-    """Description of the digital (marker) output channel on this QRM, corresponding to port M4."""
-
-
-class PulsarQRMDescription(QbloxBaseDescription):
-    """Information needed to specify a Pulsar QRM in the :class:`~.CompilationConfig`."""
-
-    instrument_type: Literal["Pulsar_QRM"]
-    """The instrument type, used to select this datastructure when parsing a :class:`~.CompilationConfig`."""
-    complex_output_0: Optional[ComplexChannelDescription] = None
-    """Description of the complex output channel on this QRM, corresponding to ports O1 and O2."""
-    complex_input_0: Optional[ComplexChannelDescription] = None
-    """Description of the complex input channel on this QRM, corresponding to ports I1 and I2."""
-    real_output_0: Optional[RealChannelDescription] = None
-    """Description of the real output channel on this QRM, corresponding to port O1."""
-    real_output_1: Optional[RealChannelDescription] = None
-    """Description of the real output channel on this QRM, corresponding to port O2."""
-    real_input_0: Optional[RealChannelDescription] = None
-    """Description of the real input channel on this QRM, corresponding to port I1."""
-    real_input_1: Optional[RealChannelDescription] = None
-    """Description of the real output channel on this QRM, corresponding to port I2."""
-    digital_output_0: Optional[DigitalChannelDescription] = None
-    """Description of the digital (marker) output channel on this QRM, corresponding to port M1."""
-    digital_output_1: Optional[DigitalChannelDescription] = None
-    """Description of the digital (marker) output channel on this QRM, corresponding to port M2."""
-    digital_output_2: Optional[DigitalChannelDescription] = None
-    """Description of the digital (marker) output channel on this QRM, corresponding to port M3."""
-    digital_output_3: Optional[DigitalChannelDescription] = None
-    """Description of the digital (marker) output channel on this QRM, corresponding to port M4."""
 
 
 QbloxHardwareDescription = Annotated[
     Union[
         ClusterDescription,
-        PulsarQCMDescription,
-        PulsarQRMDescription,
         LocalOscillatorDescription,
         IQMixerDescription,
     ],
@@ -895,7 +1065,7 @@ class SequencerOptions(DataStructure):
     Configuration options for a sequencer.
 
     For allowed values, also see `Cluster QCoDeS parameters
-    <https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/api_reference/sequencer.html#cluster-qcodes-parameters>`__.
+    <https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/api_reference/sequencer.html#cluster-qcodes-parameters>`__.
 
     .. admonition:: Example
         :class: dropdown
@@ -948,6 +1118,23 @@ class SequencerOptions(DataStructure):
                 f"in the SequencerOptions. Must be between -1.0 and 1.0."
             )
         return init_setting
+
+
+class QbloxHardwareDistortionCorrection(HardwareDistortionCorrection):
+    """A hardware distortion correction specific to the Qblox backend."""
+
+    bt_coeffs: Optional[List[float]] = None
+    """Coefficient of the bias tee correction."""
+    exp0_coeffs: Optional[List[float]] = None
+    """Coefficients of the exponential overshoot/undershoot correction 1."""
+    exp1_coeffs: Optional[List[float]] = None
+    """Coefficients of the exponential overshoot/undershoot correction 2."""
+    exp2_coeffs: Optional[List[float]] = None
+    """Coefficients of the exponential overshoot/undershoot correction 3."""
+    exp3_coeffs: Optional[List[float]] = None
+    """Coefficients of the exponential overshoot/undershoot correction 4."""
+    fir_coeffs: Optional[List[float]] = None
+    """Coefficients for the FIR filter."""
 
 
 class QbloxHardwareOptions(HardwareOptions):
@@ -1004,3 +1191,61 @@ class QbloxHardwareOptions(HardwareOptions):
     Dictionary containing the options (values) that should be set
     on the sequencer that is used for a certain port-clock combination (keys).
     """
+    distortion_corrections: Optional[
+        Dict[
+            str,
+            Union[
+                SoftwareDistortionCorrection,
+                QbloxHardwareDistortionCorrection,
+                List[QbloxHardwareDistortionCorrection],
+            ],
+        ]
+    ] = None
+
+
+QbloxHardwareOptions.model_rebuild()
+
+
+class _LocalOscillatorCompilerConfig(DataStructure):
+    """Configuration values for a :class:`quantify_scheduler.backends.qblox.instrument_compilers.LocalOscillatorCompiler`."""
+
+    instrument_type: Literal["LocalOscillator"]
+    """The type of the instrument described by this config."""
+    hardware_description: LocalOscillatorDescription
+    """Description of the physical setup of this local oscillator."""
+    frequency: Union[float, None] = None
+    """The frequency of this local oscillator."""
+
+
+class _ClusterCompilerConfig(DataStructure):
+    """Configuration values for a :class:`~.ClusterCompiler`."""
+
+    instrument_type: Literal["Cluster"]
+    """The type of the instrument described by this config."""
+    ref: Union[Literal["internal"], Literal["external"]]
+    """The reference source for the cluster."""
+    sequence_to_file: bool = False
+    """Write sequencer programs to files for (all modules in this) cluster."""
+    modules: Dict[int, _ClusterModuleCompilerConfig] = {}
+    """Compiler configs of the modules of this cluster, using slot index as key."""
+    portclock_to_path: Dict[str, str] = {}
+    """Mapping between portclocks and their associated channel name paths (e.g. cluster0.module1.complex_output_0)."""
+
+
+class _ClusterModuleCompilerConfig(DataStructure):
+    """Configuration values for a :class:`~.ClusterModuleCompiler`."""
+
+    instrument_type: Union[
+        Literal["QCM"], Literal["QRM"], Literal["QCM_RF"], Literal["QRM_RF"]
+    ]
+    """The type of the instrument described by this config."""
+    hardware_description: ClusterModuleDescription
+    """Description of the physical setup of this module."""
+    hardware_options: QbloxHardwareOptions
+    """Options that are used in compiling the instructions for the hardware."""
+    connectivity: Connectivity
+    """Datastructure representing how ports on the quantum device are connected to ports on the control hardware."""
+    portclock_to_path: Dict[str, str] = {}
+    """Mapping between portclocks and their associated channel name paths (e.g. cluster0.module1.complex_output_0)."""
+    channel_to_lo: Dict[str, str] = {}
+    """Mapping between channel names and the name of the local oscillator they are connected to."""

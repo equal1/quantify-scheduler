@@ -1,11 +1,7 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
 """Tests for factory module."""
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-# pylint: disable=redefined-outer-name
-# pylint: disable=unused-argument
+
 
 from typing import Type
 
@@ -29,6 +25,7 @@ TEST_OP_INFO_MAPPING = {
             "wf_func": "quantify_scheduler.waveforms.doesnotexist",
             "port": "some_port",
             "clock": "some_clock",
+            "duration": 1e-7,
         },
         timing=0,
     ),
@@ -38,6 +35,7 @@ TEST_OP_INFO_MAPPING = {
             "wf_func": "quantify_scheduler.waveforms.square",
             "port": "some_port",
             "clock": "some_clock",
+            "duration": 1e-7,
         },
         timing=0,
     ),
@@ -47,6 +45,7 @@ TEST_OP_INFO_MAPPING = {
             "wf_func": "quantify_scheduler.waveforms.staircase",
             "port": "some_port",
             "clock": "some_clock",
+            "duration": 1e-7,
         },
         timing=0,
     ),
@@ -59,18 +58,20 @@ TEST_OP_INFO_MAPPING = {
             "bin_mode": BinMode.AVERAGE,
             "port": "some_port",
             "clock": "some_clock",
+            "duration": 1e-7,
         },
         timing=0,
     ),
     "weighted": OpInfo(
         name="",
         data={
-            "protocol": "WeightedIntegratedComplex",
+            "protocol": "NumericalSeparatedWeightedIntegration",
             "acq_channel": 0,
             "acq_index": 0,
             "bin_mode": BinMode.AVERAGE,
             "port": "some_port",
             "clock": "some_clock",
+            "duration": 1e-7,
         },
         timing=0,
     ),
@@ -83,6 +84,7 @@ TEST_OP_INFO_MAPPING = {
             "bin_mode": BinMode.AVERAGE,
             "port": "some_port",
             "clock": "some_clock",
+            "duration": 1e-7,
         },
         timing=0,
     ),
@@ -95,6 +97,7 @@ TEST_OP_INFO_MAPPING = {
             "bin_mode": BinMode.AVERAGE,
             "port": "some_port",
             "clock": "some_clock",
+            "duration": 1e-7,
         },
         timing=0,
     ),
@@ -106,6 +109,7 @@ TEST_OP_INFO_MAPPING = {
             "offset_path_Q": 0.5,
             "port": "some_port",
             "clock": "some_clock",
+            "duration": 0,
         },
         timing=0,
     ),
@@ -115,6 +119,7 @@ TEST_OP_INFO_MAPPING = {
             "instruction": q1asm_instructions.UPDATE_PARAMETERS,
             "port": "some_port",
             "clock": "some_clock",
+            "duration": 4e-9,
         },
         timing=0,
     ),

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from quantify_scheduler.operations.operation import Operation
 
 import quantify_scheduler.schedules._visualization.pulse_scheme as ps
 from quantify_scheduler.helpers.importers import import_python_object_from_string
@@ -113,7 +114,6 @@ def pulse_modulated(ax: Axes, time: float, qubit_idxs: List[int], text: str, **k
         ax.text(time, qubit_idx + 0.45, text, ha="center", va="center", zorder=6)
 
 
-# pylint: disable=unused-argument
 def meter(ax: Axes, time: float, qubit_idxs: List[int], text: str, **kw):
     """
     A simple meter to depict a measurement.
@@ -144,7 +144,6 @@ def meter(ax: Axes, time: float, qubit_idxs: List[int], text: str, **kw):
         )
 
 
-# pylint: disable=unused-argument
 def acq_meter(ax: Axes, time: float, qubit_idxs: List[int], text: str, **kw):
     """
     Variation of the meter to depict a acquisition.
@@ -197,7 +196,6 @@ def acq_meter_text(ax: Axes, time: float, qubit_idxs: List[int], text: str, **kw
     ax.text(time, max(qubit_idxs) + 0.45, text, ha="center", va="center", zorder=6)
 
 
-# pylint: disable=unused-argument
 def cnot(ax: Axes, time: float, qubit_idxs: List[int], text: str, **kw):
     """
     Markers to denote a CNOT gate between two qubits.
@@ -221,7 +219,6 @@ def cnot(ax: Axes, time: float, qubit_idxs: List[int], text: str, **kw):
     ax.plot([time], qubit_idxs[1], marker="+", markersize=12, color="white")
 
 
-# pylint: disable=unused-argument, invalid-name
 def cz(ax: Axes, time: float, qubit_idxs: List[int], text: str, **kw):
     """
     Markers to denote a CZ gate between two qubits.
@@ -285,8 +282,6 @@ def _locate_qubit_in_address(qubit_map, address):
     raise ValueError(f"Could not resolve address '{address}'")
 
 
-# pylint disabled because func was implemented before pylint was adopted
-# pylint: disable=too-many-locals, too-many-branches, too-many-statements
 def circuit_diagram_matplotlib(
     schedule: Schedule,
     figsize: Tuple[int, int] = None,
@@ -315,7 +310,6 @@ def circuit_diagram_matplotlib(
     # to prevent the original input schedule from being modified.
     schedule = deepcopy(schedule)
 
-    # pylint: disable=import-outside-toplevel
     # importing inside function scope to prevent circular import
     from quantify_scheduler.compilation import _determine_absolute_timing
 
@@ -335,6 +329,10 @@ def circuit_diagram_matplotlib(
     # in order to avoid unnecessary redraws.
     for schedulable in schedule.schedulables.values():
         operation = schedule.operations[schedulable["operation_id"]]
+        if not isinstance(operation, Operation):
+            # FIXME #461 We do not support schedule operations in pulse diagrams yet.
+            continue
+
         if operation.valid_pulse:
             try:
                 for pulse_info in operation["pulse_info"]:
@@ -375,6 +373,9 @@ def circuit_diagram_matplotlib(
         schedule.schedulables.values(), key=lambda sch: sch["abs_time"]
     ):
         operation = schedule.operations[schedulable["operation_id"]]
+        if not isinstance(operation, Operation):
+            # FIXME #461 We do not support schedule operations in pulse diagrams yet.
+            continue
 
         tf = schedulable["abs_time"]
         time += 1 if tf != t0 else 0

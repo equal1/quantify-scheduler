@@ -16,7 +16,6 @@ from quantify_scheduler.helpers import schedule as schedule_helpers
 from quantify_scheduler.helpers.importers import import_python_object_from_string
 
 
-# pylint: disable=too-few-public-methods
 class GetWaveformPartial(Protocol):  # typing.Protocol
     """Protocol type definition class for the get_waveform partial function."""
 
@@ -289,6 +288,7 @@ def exec_waveform_function(wf_func: str, t: np.ndarray, pulse_info: dict) -> np.
                 D_amp=pulse_info["D_amp"],
                 duration=pulse_info["duration"],
                 nr_sigma=pulse_info["nr_sigma"],
+                sigma=pulse_info["sigma"],
                 phase=pulse_info["phase"],
             )
     else:

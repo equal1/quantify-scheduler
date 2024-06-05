@@ -1,7 +1,3 @@
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-# pylint: disable=redefined-outer-name
 import json
 import pytest
 
@@ -15,8 +11,8 @@ from quantify_scheduler.json_utils import SchedulerJSONEncoder, SchedulerJSONDec
 
 @pytest.fixture
 def edge_q2b_q3b():
-    q2b = BasicTransmonElement("q2b")  # pylint: disable=invalid-name
-    q3b = BasicTransmonElement("q3b")  # pylint: disable=invalid-name
+    q2b = BasicTransmonElement("q2b")
+    q3b = BasicTransmonElement("q3b")
 
     edge_q2b_q3b = CompositeSquareEdge(
         parent_element_name=q2b.name, child_element_name=q3b.name
@@ -24,10 +20,6 @@ def edge_q2b_q3b():
 
     # Transmon element is returned
     yield edge_q2b_q3b
-    # after the test, teardown...
-    q2b.close()
-    q3b.close()
-    edge_q2b_q3b.close()
 
 
 def test_generate_edge_config(edge_q2b_q3b):
@@ -82,7 +74,10 @@ def test_composite_square_edge_serialization(edge_q2b_q3b):
         json.dumps(edge_q2b_q3b, cls=SchedulerJSONEncoder)
     )
     assert edge_q2b_q3b_as_dict.__class__ is dict
-    assert edge_q2b_q3b_as_dict["deserialization_type"] == "CompositeSquareEdge"
+    assert (
+        edge_q2b_q3b_as_dict["deserialization_type"]
+        == "quantify_scheduler.device_under_test.composite_square_edge.CompositeSquareEdge"
+    )
 
     # Check that all original submodule params match their serialized counterpart
     for submodule_name, submodule in edge_q2b_q3b.submodules.items():

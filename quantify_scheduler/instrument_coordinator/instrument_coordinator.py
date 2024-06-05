@@ -80,7 +80,7 @@ class InstrumentCoordinator(qcodes_base.Instrument):
     add_default_generic_icc
         If True, automatically adds a GenericInstrumentCoordinatorComponent to this
         instrument coordinator with the default name.
-    """  # pylint: disable=line-too-long
+    """
 
     def __init__(self, name: str, add_default_generic_icc: bool = True) -> None:
         super().__init__(name)
@@ -254,13 +254,28 @@ class InstrumentCoordinator(qcodes_base.Instrument):
 
     def start(self) -> None:
         """
-        Start all of the components.
+        Start all of the components that appear in the compiled instructions.
 
-        The components are started in the order in which they were added.
+        The instruments will be started in the order in which they were added to the
+        instrument coordinator.
         """
-        for instr_name in self.components():
-            instrument = self.find_instrument(instr_name)
-            instrument.start()
+        if self._compiled_schedule is None:
+            raise ValueError(
+                "Attempting to start `InstrumentCoordinator` without a compiled "
+                "schedule. Please pass a compiled schedule to `.prepare` before "
+                "starting the `InstrumentCoordinator`. e.g. \n"
+                " > ic.prepare(compiled_schedule)\n"
+                " > ic.start()\n"
+            )
+        compiled_instructions = self._compiled_schedule.get("compiled_instructions", {})
+        used_components = [
+            base.instrument_to_component_name(name)
+            for name in compiled_instructions.keys()
+        ]
+        for component_name in self.components():
+            if component_name in used_components:
+                component = self.get_component(component_name)
+                component.start()
 
     def stop(self, allow_failure=False) -> None:
         """
@@ -310,7 +325,7 @@ class InstrumentCoordinator(qcodes_base.Instrument):
                 check_already_existing_acquisition(
                     new_dataset=component_acquisitions, current_dataset=acquisitions
                 )
-                acquisitions.update(component_acquisitions)
+                acquisitions = acquisitions.merge(component_acquisitions)
         return acquisitions
 
     def wait_done(self, timeout_sec: int = 10) -> None:

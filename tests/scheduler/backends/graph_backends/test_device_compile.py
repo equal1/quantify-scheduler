@@ -3,14 +3,21 @@ Testing specifically the device compilation.
 This stage should take care of the conversion of gates to pulses and also support hybrid
 schedules.
 """
+
 import pytest
 
 from quantify_scheduler import Schedule, CompiledSchedule
-from quantify_scheduler.backends import (
+from quantify_scheduler.backends.graph_compilation import (
+    DeviceCompilationConfig,
     SerialCompiler,
+    SerialCompilationConfig,
 )  # The module we are interested in testing
 from quantify_scheduler.device_under_test.quantum_device import QuantumDevice
 from quantify_scheduler.device_under_test.transmon_element import BasicTransmonElement
+from quantify_scheduler.operations.operation import Operation
+from quantify_scheduler.schemas.examples.device_example_cfgs import (
+    example_transmon_cfg,
+)
 
 from tests.fixtures.mock_setup import close_instruments
 
@@ -88,3 +95,32 @@ def test_compile_in_setting_quantum_device(
         config=quantum_device.generate_compilation_config(),
     )
     assert isinstance(compiled_sched, CompiledSchedule)
+
+
+def test_device_compile_default_compilation_passes(basic_schedule):
+    """
+    Test that compiling a compiling a schedule from the circuit-layer to the
+    device-layer works when no compilation passes are specified in the device config input.
+    The default compilation passes should then be used.
+    """
+    for op in basic_schedule.operations.values():
+        assert not op.valid_pulse
+
+    device_config = DeviceCompilationConfig(
+        elements=example_transmon_cfg["elements"],
+        clocks=example_transmon_cfg["clocks"],
+        edges=example_transmon_cfg["edges"],
+    )
+
+    config = SerialCompilationConfig(
+        name="test",
+        device_compilation_config=device_config,
+    )
+    compiler = SerialCompiler(name="test")
+    compiled_schedule = compiler.compile(schedule=basic_schedule, config=config)
+
+    assert isinstance(compiled_schedule, CompiledSchedule)
+
+    for op in compiled_schedule.operations.values():
+        assert isinstance(op, Operation)  # FIXME #461
+        assert op.valid_pulse

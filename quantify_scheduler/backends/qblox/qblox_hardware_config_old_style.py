@@ -2,6 +2,8 @@
 # Licensed according to the LICENCE file on the main branch
 """Example old-style Qblox hardware config dictionary for legacy support."""
 
+from quantify_scheduler.backends.qblox.enums import DistortionCorrectionLatencyEnum
+
 hardware_config = {
     "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
     "latency_corrections": {"q4:mw-q4.01": 8e-9, "q5:mw-q5.01": 4e-9},
@@ -11,6 +13,7 @@ hardware_config = {
             "input_var_name": "x",
             "kwargs": {"b": [0, 0.25, 0.5], "a": [1]},
             "clipping_values": [-2.5, 2.5],
+            "sampling_rate": 1e9,
         }
     },
     "cluster0": {
@@ -26,6 +29,7 @@ hardware_config = {
                 "dc_mixer_offset_Q": 0.0,
                 "downconverter_freq": None,
                 "marker_debug_mode_enable": True,
+                "distortion_correction_latency_compensation": DistortionCorrectionLatencyEnum.NO_DELAY_COMP,  # noqa: E501
                 "mix_lo": True,
                 "portclock_configs": [
                     {
@@ -55,6 +59,10 @@ hardware_config = {
                 "portclock_configs": [
                     {"port": "q6:mw", "clock": "q6.01", "interm_freq": None}
                 ],
+            },
+            "digital_output_0": {
+                "portclock_configs": [{"port": "q0:switch", "clock": "digital"}],
+                "distortion_correction_latency_compensation": DistortionCorrectionLatencyEnum.NO_DELAY_COMP,  # noqa: E501
             },
         },
         "cluster0_module3": {
@@ -110,6 +118,16 @@ hardware_config = {
                 ],
             },
         },
+        "cluster0_module7": {
+            "instrument_type": "QCM",
+            "sequence_to_file": False,
+            "real_output_0": {
+                "lo_name": "lo_real",
+                "portclock_configs": [
+                    {"port": "q7:mw", "clock": "q7.01", "interm_freq": None}
+                ],
+            },
+        },
         "cluster0_module10": {
             "instrument_type": "QCM",
             "sequence_to_file": False,
@@ -136,4 +154,5 @@ hardware_config = {
     },
     "lo0": {"instrument_type": "LocalOscillator", "frequency": None, "power": 1},
     "lo1": {"instrument_type": "LocalOscillator", "frequency": 7.2e9, "power": 1},
+    "lo_real": {"instrument_type": "LocalOscillator", "frequency": 5e9, "power": 1},
 }

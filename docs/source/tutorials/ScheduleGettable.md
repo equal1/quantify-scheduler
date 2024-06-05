@@ -44,6 +44,7 @@ from quantify_scheduler.device_under_test.quantum_device import QuantumDevice
 from quantify_scheduler.device_under_test.transmon_element import BasicTransmonElement
 from quantify_scheduler.instrument_coordinator import InstrumentCoordinator
 from quantify_scheduler.instrument_coordinator.components.qblox import ClusterComponent
+from quantify_scheduler.helpers.qblox_dummy_instrument import start_dummy_cluster_armed_sequencers
 
 
 # First, don't forget to set the data directory!
@@ -89,6 +90,9 @@ cluster = Cluster(
 
 ic_cluster = ClusterComponent(cluster)
 
+# Temporarily fixing dummy cluster's deficiency.
+cluster.start_sequencer = lambda : start_dummy_cluster_armed_sequencers(ic_cluster)
+
 # We create an InstrumentCoordinator to control the cluster and add it to the
 # QuantumDevice.
 
@@ -100,36 +104,39 @@ single_qubit_device.instr_instrument_coordinator(instrument_coordinator.name)
 # A basic hardware configuration will be used for the two cluster modules.
 
 hardware_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
-    f"{cluster.name}": {
-        "ref": "internal",
-        "instrument_type": "Cluster",
-        f"{cluster.module1.name}": {
-            "instrument_type": "QRM_RF",
-            "complex_output_0": {
-                "lo_freq": LO_FREQ_READOUT,
-                "portclock_configs": [
-                    {
-                        "port": "q0:res",
-                        "clock": "q0.ro",
-                    }
-                ],
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+    "hardware_description": {
+        f"{cluster.name}": {
+            "instrument_type": "Cluster",
+            "modules": {
+                "1": {
+                    "instrument_type": "QRM_RF"
+                },
+                "2": {
+                    "instrument_type": "QCM_RF"
+                }
             },
-        },
-        f"{cluster.module2.name}": {
-            "instrument_type": "QCM_RF",
-            "complex_output_0": {
-                "lo_freq": LO_FREQ_QUBIT,
-                "portclock_configs": [
-                    {
-                        "port": "q0:mw",
-                        "clock": "q0.01",
-                    }
-                ],
-            },
-        },
+            "ref": "internal"
+        }
     },
+    "hardware_options": {
+        "modulation_frequencies": {
+            "q0:res-q0.ro": {
+                "lo_freq": LO_FREQ_READOUT
+            },
+            "q0:mw-q0.01": {
+                "lo_freq": LO_FREQ_QUBIT
+            }
+        }
+    },
+    "connectivity": {
+        "graph": [
+            [f"{cluster.name}.module1.complex_output_0", "q0:res"],
+            [f"{cluster.name}.module2.complex_output_0", "q0:mw"]
+        ]
+    }
 }
+
 
 # This hardware configuration should also be added to the quantum device.
 single_qubit_device.hardware_config(hardware_cfg)
@@ -514,66 +521,62 @@ cluster = Cluster(
 
 ic_cluster = ClusterComponent(cluster)
 
+# Temporarily fixing dummy cluster's deficiency.
+cluster.start_sequencer = lambda : start_dummy_cluster_armed_sequencers(ic_cluster)
+
 instrument_coordinator = InstrumentCoordinator("instrument_coordinator")
 instrument_coordinator.add_component(ic_cluster)
 
 two_qubit_device.instr_instrument_coordinator(instrument_coordinator.name)
 
 hardware_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
-    f"{cluster.name}": {
-        "ref": "internal",
-        "instrument_type": "Cluster",
-        f"{cluster.module1.name}": {
-            "instrument_type": "QRM_RF",
-            "complex_output_0": {
-                "lo_freq": Q0_LO_FREQ_READOUT,
-                "portclock_configs": [
-                    {
-                        "port": "q0:res",
-                        "clock": "q0.ro",
-                    }
-                ],
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+    "hardware_description": {
+        f"{cluster.name}": {
+            "instrument_type": "Cluster",
+            "modules": {
+                "1": {
+                    "instrument_type": "QRM_RF"
+                },
+                "2": {
+                    "instrument_type": "QCM_RF"
+                },
+                "3": {
+                    "instrument_type": "QRM_RF"
+                },
+                "4": {
+                    "instrument_type": "QCM_RF"
+                }
             },
-        },
-        f"{cluster.module2.name}": {
-            "instrument_type": "QCM_RF",
-            "complex_output_0": {
-                "lo_freq": Q0_LO_FREQ_QUBIT,
-                "portclock_configs": [
-                    {
-                        "port": "q0:mw",
-                        "clock": "q0.01",
-                    }
-                ],
-            },
-        },
-        f"{cluster.module3.name}": {
-            "instrument_type": "QRM_RF",
-            "complex_output_0": {
-                "lo_freq": Q1_LO_FREQ_READOUT,
-                "portclock_configs": [
-                    {
-                        "port": "q1:res",
-                        "clock": "q1.ro",
-                    }
-                ],
-            },
-        },
-        f"{cluster.module4.name}": {
-            "instrument_type": "QCM_RF",
-            "complex_output_0": {
-                "lo_freq": Q1_LO_FREQ_QUBIT,
-                "portclock_configs": [
-                    {
-                        "port": "q1:mw",
-                        "clock": "q1.01",
-                    }
-                ],
-            },
-        },
+            "ref": "internal"
+        }
     },
+    "hardware_options": {
+        "modulation_frequencies": {
+            "q0:res-q0.ro": {
+                "lo_freq": Q0_LO_FREQ_READOUT
+            },
+            "q0:mw-q0.01": {
+                "lo_freq": Q0_LO_FREQ_QUBIT
+            },
+            "q1:res-q1.ro": {
+                "lo_freq": Q1_LO_FREQ_READOUT
+            },
+            "q1:mw-q1.01": {
+                "lo_freq": Q1_LO_FREQ_QUBIT
+            }
+        }
+    },
+    "connectivity": {
+        "graph": [
+            [f"{cluster.name}.module1.complex_output_0", "q0:res"],
+            [f"{cluster.name}.module2.complex_output_0", "q0:mw"],
+            [f"{cluster.name}.module3.complex_output_0", "q1:res"],
+            [f"{cluster.name}.module4.complex_output_0", "q1:mw"]
+        ]
+    }
 }
+
 
 two_qubit_device.hardware_config(hardware_cfg)
 

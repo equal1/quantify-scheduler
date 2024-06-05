@@ -3,20 +3,16 @@
 """Pulse and acquisition corrections for hardware compilation."""
 import logging
 import warnings
-from typing import Any, Dict, Generator, Optional, Tuple
+from typing import Any, Dict, Generator, Optional, Tuple, Union
 
 import numpy as np
-from quantify_scheduler import Schedule
-from quantify_scheduler.backends.qblox import constants
-from quantify_scheduler.backends.qblox.helpers import generate_waveform_data
+from quantify_scheduler.schedules.schedule import Schedule, ScheduleBase
 from quantify_scheduler.helpers.importers import import_python_object_from_string
+from quantify_scheduler.helpers.waveforms import get_waveform
 from quantify_scheduler.operations.operation import Operation
 from quantify_scheduler.operations.pulse_library import NumericalPulse
 
 logger = logging.getLogger(__name__)
-
-
-# pylint: disable=too-few-public-methods
 
 
 def determine_relative_latency_corrections(
@@ -71,7 +67,7 @@ def determine_relative_latency_corrections(
     return latency_dict
 
 
-def distortion_correct_pulse(  # pylint: disable=too-many-arguments
+def distortion_correct_pulse(
     pulse_data: Dict[str, Any],
     sampling_rate: int,
     filter_func_name: str,
@@ -106,10 +102,7 @@ def distortion_correct_pulse(  # pylint: disable=too-many-arguments
     :
         The sampled, distortion corrected pulse wrapped in a ``NumericalPulse``.
     """
-    waveform_data = generate_waveform_data(
-        data_dict=pulse_data,
-        sampling_rate=sampling_rate,
-    )
+    waveform_data = get_waveform(pulse_info=pulse_data, sampling_rate=sampling_rate)
 
     filter_func = import_python_object_from_string(filter_func_name)
     kwargs = {input_var_name: waveform_data, **kwargs_dict}
@@ -143,9 +136,9 @@ def _is_distortion_correctable(operation: Operation) -> bool:
     return operation.valid_pulse and not operation.has_voltage_offset
 
 
-def apply_distortion_corrections(
-    schedule: Schedule, hardware_cfg: Dict[str, Any]
-) -> Schedule:
+def apply_software_distortion_corrections(  # noqa: PLR0912
+    operation: Union[Operation, Schedule], distortion_corrections: dict
+) -> Optional[Union[Operation, Schedule]]:
     """
     Apply distortion corrections to operations in the schedule.
 
@@ -178,15 +171,17 @@ def apply_distortion_corrections(
 
     Parameters
     ----------
-    schedule
-        The schedule that contains operations that are to be distortion corrected.
-    hardware_cfg
-        The hardware configuration of the setup.
+    operation
+        The operation that contains operations that are to be distortion corrected.
+        Note, this function updates the operation.
+    distortion_corrections
+        The distortion_corrections configuration of the setup.
 
     Returns
     -------
     :
-        The schedule with distortion corrected operations.
+        The new operation with distortion corrected operations, if it needs to be replaced.
+        If it doesn't need to be replaced in the schedule or control flow, it returns ``None``.
 
     Warns
     -----
@@ -202,37 +197,58 @@ def apply_distortion_corrections(
     KeyError
         when clipping values are supplied but not two values exactly, min and max.
     """
-    distortion_corrections_key = "distortion_corrections"
-    if hardware_cfg.get(distortion_corrections_key) is None:
-        logging.debug(f'No key "{distortion_corrections_key}" supplied in hardware_cfg')
-        return schedule
-
-    for operation_id in schedule.operations.keys():
+    if isinstance(operation, ScheduleBase):
+        for inner_operation_id in operation.operations.keys():
+            replacing_operation = apply_software_distortion_corrections(
+                operation.operations[inner_operation_id], distortion_corrections
+            )
+            if replacing_operation is not None:
+                operation.operations[inner_operation_id] = replacing_operation
+        return None
+    else:
         substitute_operation = None
-
-        for pulse_info_idx, pulse_data in enumerate(
-            schedule.operations[operation_id].data["pulse_info"]
-        ):
+        for pulse_info_idx, pulse_data in enumerate(operation.data["pulse_info"]):
             portclock_key = f"{pulse_data['port']}-{pulse_data['clock']}"
 
-            if portclock_key in hardware_cfg[distortion_corrections_key]:
-                if not _is_distortion_correctable(schedule.operations[operation_id]):
+            if portclock_key in distortion_corrections:
+                if not _is_distortion_correctable(operation):
                     warnings.warn(
                         f"Schedule contains an operation, for which distortion "
                         f"correction is not implemented. Please either replace the "
                         f"operation, or omit the distortion correction setting for "
                         f"this port in order to suppress this warning. Offending "
-                        f"operation: {schedule.operations[operation_id]}",
+                        f"operation: {operation}",
                         RuntimeWarning,
                     )
                     continue
 
-                correction_cfg = hardware_cfg[distortion_corrections_key][portclock_key]
+                correction_cfg = distortion_corrections[portclock_key]
+
+                try:
+                    correction_type = correction_cfg.get("correction_type", "software")
+                except AttributeError:
+                    correction_type = correction_cfg[0].get(
+                        "correction_type", "software"
+                    )
+
+                if correction_type != "software":
+                    continue
+
+                try:
+                    correction_type = correction_cfg.get("correction_type", "software")
+                except AttributeError:
+                    correction_type = correction_cfg[0].get(
+                        "correction_type", "software"
+                    )
+
+                if correction_type != "software":
+                    continue
 
                 filter_func_name = correction_cfg.get("filter_func", None)
                 input_var_name = correction_cfg.get("input_var_name", None)
                 kwargs_dict = correction_cfg.get("kwargs", None)
                 clipping_values = correction_cfg.get("clipping_values", None)
+                sampling_rate = correction_cfg.get("sampling_rate")
 
                 if None in (filter_func_name, input_var_name, kwargs_dict):
                     raise KeyError(
@@ -252,16 +268,16 @@ def apply_distortion_corrections(
 
                 corrected_pulse = distortion_correct_pulse(
                     pulse_data=pulse_data,
-                    sampling_rate=constants.SAMPLING_RATE,
+                    sampling_rate=sampling_rate,
                     filter_func_name=filter_func_name,
                     input_var_name=input_var_name,
                     kwargs_dict=kwargs_dict,
                     clipping_values=clipping_values,
                 )
 
-                schedule.operations[operation_id].data["pulse_info"][
-                    pulse_info_idx
-                ] = corrected_pulse.data["pulse_info"][0]
+                operation.data["pulse_info"][pulse_info_idx] = corrected_pulse.data[
+                    "pulse_info"
+                ][0]
 
                 if pulse_info_idx == 0:
                     substitute_operation = corrected_pulse
@@ -269,9 +285,6 @@ def apply_distortion_corrections(
         # Convert to operation-type of first entry in pulse_info,
         # required as first entry in pulse_info is used to generate signature in __str__
         if substitute_operation is not None:
-            substitute_operation.data["pulse_info"] = schedule.operations[
-                operation_id
-            ].data["pulse_info"]
-            schedule.operations[operation_id] = substitute_operation
-
-    return schedule
+            substitute_operation.data["pulse_info"] = operation.data["pulse_info"]
+            return substitute_operation
+        return None

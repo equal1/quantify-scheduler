@@ -1,9 +1,7 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-# pylint: disable=redefined-outer-name
+
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -259,22 +257,36 @@ def acquisition_test_data(request):
     acq_protocol, bin_mode = request.param
 
     if acq_protocol == "Trace" and bin_mode == BinMode.AVERAGE:
-        expected_data = np.ones((1, 64), dtype=np.complex_)
+        expected_data = np.ones((1, 64), dtype=np.complex128)
         expected_result = xr.Dataset(
-            {0: (["acq_index_0", "trace_index_0"], expected_data)}
+            {
+                0: (
+                    ["acq_index_0", "trace_index_0"],
+                    expected_data,
+                    {"acq_protocol": acq_protocol},
+                )
+            }
         )
     elif acq_protocol == "SSBIntegrationComplex" and bin_mode == BinMode.AVERAGE:
-        expected_data = np.ones((1,), dtype=np.complex_)
-        expected_result = xr.Dataset({0: (["acq_index_0"], expected_data)})
-    elif acq_protocol == "SSBIntegrationComplex" and bin_mode == BinMode.APPEND:
-        expected_data = np.ones((64, 1), dtype=np.complex_)
+        expected_data = np.ones((1,), dtype=np.complex128)
         expected_result = xr.Dataset(
-            {0: (["repetition", "acq_index_0"], expected_data)}
+            {0: (["acq_index_0"], expected_data, {"acq_protocol": acq_protocol})}
+        )
+    elif acq_protocol == "SSBIntegrationComplex" and bin_mode == BinMode.APPEND:
+        expected_data = np.ones((64, 1), dtype=np.complex128)
+        expected_result = xr.Dataset(
+            {
+                0: (
+                    ["repetition", "acq_index_0"],
+                    expected_data,
+                    {"acq_protocol": acq_protocol},
+                )
+            }
         )
     else:
         raise RuntimeError("Unknown protocol")
 
-    def resolver(uhfqa):  # pylint: disable=unused-variable
+    def resolver(uhfqa):
         return expected_data
 
     return acq_protocol, bin_mode, resolver, expected_result

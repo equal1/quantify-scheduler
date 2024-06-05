@@ -1,6 +1,6 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
-# pylint: disable=missing-function-docstring
+
 from __future__ import annotations
 
 import inspect
@@ -160,6 +160,7 @@ def test_exec_waveform_function(wf_func: str, mocker: MockerFixture) -> None:
         "G_amp": 0.7,
         "D_amp": -0.2,
         "nr_sigma": 3,
+        "sigma": None,
         "phase": 90,
     }
     wavefn_stub = mocker.patch(wf_func, return_value=[])
@@ -212,10 +213,7 @@ def test_exec_custom_waveform_function(mocker: MockerFixture) -> None:
     t = np.arange(0, 10, 1)
     pulse_info_mock = {"duration": 1.4e-9, "t0": 0}
 
-    # pylint: disable=W0613
-    def custom_function(
-        t: int, duration: float, t0: float
-    ) -> None:  # pylint: disable=unused-argument
+    def custom_function(t: int, duration: float, t0: float) -> None:
         pass
 
     mock = mocker.Mock()

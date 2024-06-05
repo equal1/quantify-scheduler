@@ -60,7 +60,7 @@ def get_acq_uuid(acq_info: dict[str, Any]) -> int:
     return make_hash(without(acq_info, ["t0", "waveforms"]))
 
 
-def get_total_duration(schedule: CompiledSchedule) -> float:
+def get_total_duration(schedule: ScheduleBase) -> float:
     """
     Return the total schedule duration in seconds.
 
@@ -143,7 +143,7 @@ def get_operation_start(
 
 
 def get_operation_end(
-    schedule: CompiledSchedule,
+    schedule: ScheduleBase,
     timeslot_index: int,
 ) -> float:
     """
@@ -222,8 +222,7 @@ def get_port_timeline(
         # Sort pulses and acquisitions within an operation.
         for uuid, info in sorted(
             chain(pulse_info_iter, acq_info_iter),
-            key=lambda pair: abs_time  # pylint: disable=cell-var-from-loop
-            + pair[1]["t0"],
+            key=lambda pair: abs_time + pair[1]["t0"],
         ):
             port = str(info["port"])
             if port not in port_timeline_dict:
@@ -260,12 +259,14 @@ def get_schedule_time_offset(
     """
     return min(
         map(
-            lambda port: get_operation_start(
-                schedule,
-                timeslot_index=next(iter(port_timeline_dict[port])),
-            )
-            if port != "None"
-            else np.inf,
+            lambda port: (
+                get_operation_start(
+                    schedule,
+                    timeslot_index=next(iter(port_timeline_dict[port])),
+                )
+                if port != "None"
+                else np.inf
+            ),
             port_timeline_dict.keys(),
         ),
         default=0,
@@ -331,7 +332,7 @@ def get_acq_info_by_uuid(schedule: CompiledSchedule) -> dict[int, dict[str, Any]
 
 
 def extract_acquisition_metadata_from_schedule(
-    schedule: ScheduleBase,
+    schedule: Schedule,
 ) -> AcquisitionMetadata:
     """
     Extract acquisition metadata from a schedule.
@@ -370,7 +371,7 @@ def extract_acquisition_metadata_from_schedule(
         If the return type of the acquisitions is different.
 
 
-    """  # FIXME update when quantify-core!212 spec is ready # pylint: disable=fixme
+    """  # FIXME update when quantify-core!212 spec is ready
     # a dictionary containing the acquisition indices used for each channel
     acqid_acqinfo_dict = get_acq_info_by_uuid(schedule)
 
@@ -451,23 +452,23 @@ def extract_acquisition_metadata_from_acquisition_protocols(
     return acq_metadata
 
 
-def _extract_port_clocks_used(schedule: ScheduleBase) -> set[tuple]:
-    """Extracts which port-clock combinations are used in a schedule."""
-    port_clocks_used = set()
-    for op_data in schedule.operations.values():
-        if isinstance(op_data, Schedule):
+def _extract_port_clocks_used(operation: Operation | Schedule) -> set[tuple]:
+    """Extracts which port-clock combinations are used in an operation or schedule."""
+    if isinstance(operation, ScheduleBase):
+        port_clocks_used = set()
+        for op_data in operation.operations.values():
             port_clocks_used |= _extract_port_clocks_used(op_data)
-            continue
-        if not op_data.valid_pulse and not op_data.valid_acquisition:
-            raise RuntimeError(
-                f"Operation {op_data.name} is not a valid pulse or acquisition."
-                f" Please check whether the device compilation has been performed successfully."
-                f" Operation data: {repr(op_data)}"
-            )
-
-        for op_info in op_data["pulse_info"] + op_data["acquisition_info"]:
+        return port_clocks_used
+    elif operation.valid_pulse or operation.valid_acquisition:
+        port_clocks_used = set()
+        for op_info in operation["pulse_info"] + operation["acquisition_info"]:
             if (port := op_info["port"]) is None or (clock := op_info["clock"]) is None:
                 continue
             port_clocks_used.add((port, clock))
-
-    return port_clocks_used
+        return port_clocks_used
+    else:
+        raise RuntimeError(
+            f"Operation {operation.name} is not a valid pulse or acquisition."
+            f" Please check whether the device compilation has been performed successfully."
+            f" Operation data: {repr(operation)}"
+        )

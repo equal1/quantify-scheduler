@@ -141,7 +141,7 @@ class GenericPulseStrategy(PulseStrategyPartial):
         ValueError
             Data is complex (has an imaginary component), but the channel_name is not
             set as complex (e.g. ``complex_output_0``).
-        """  # pylint: disable=line-too-long  # noqa: D301
+        """  # noqa: D301
         op_info = self.operation_info
         waveform_data = helpers.generate_waveform_data(
             op_info.data, sampling_rate=constants.SAMPLING_RATE
@@ -190,6 +190,21 @@ class GenericPulseStrategy(PulseStrategyPartial):
         qasm_program
             The QASMProgram to add the assembly instructions to.
         """
+        if qasm_program.time_last_pulse_triggered is not None and (
+            qasm_program.elapsed_time - qasm_program.time_last_pulse_triggered
+            < constants.MIN_TIME_BETWEEN_OPERATIONS
+        ):
+
+            raise ValueError(
+                f"Attempting to start an operation at t="
+                f"{qasm_program.elapsed_time} ns, while the last operation was "
+                f"started at t={qasm_program.time_last_pulse_triggered} ns. "
+                f"Please ensure a minimum interval of "
+                f"{constants.MIN_TIME_BETWEEN_OPERATIONS} ns between "
+                f"operations.\n\nError caused by operation:\n"
+                f"{repr(self.operation_info)}."
+            )
+        qasm_program.time_last_pulse_triggered = qasm_program.elapsed_time
         self._check_amplitudes_set()
 
         # Only emit play command if at least one path has a signal
@@ -209,10 +224,10 @@ class GenericPulseStrategy(PulseStrategyPartial):
                 q1asm_instructions.PLAY,
                 index0 if (index0 is not None) else index1,
                 index1 if (index1 is not None) else index0,
-                constants.GRID_TIME,  # N.B. the waveform keeps playing
+                constants.MIN_TIME_BETWEEN_OPERATIONS,  # N.B. the waveform keeps playing
                 comment=f"play {self.operation_info.name} ({self._waveform_len} ns)",
             )
-            qasm_program.elapsed_time += constants.GRID_TIME
+            qasm_program.elapsed_time += constants.MIN_TIME_BETWEEN_OPERATIONS
 
 
 class MarkerPulseStrategy(PulseStrategyPartial):
@@ -243,32 +258,27 @@ class MarkerPulseStrategy(PulseStrategyPartial):
                 f"for port-clock combination '{port}-{clock}' (current channel_name is '{self.channel_name}')."
                 f"Operation causing exception: {self.operation_info}"
             )
-        duration = round(self.operation_info.duration * 1e9)
         marker_bit_index = int(self.operation_info.data["output"])
         default_marker = qasm_program.static_hw_properties.default_marker
         # RF modules use first 2 bits of marker bitstring as output/input switch.
-        if qasm_program.static_hw_properties.instrument_type in ("QRM-RF", "QCM-RF"):
+        if qasm_program.static_hw_properties.instrument_type in ("QRM_RF", "QCM_RF"):
             marker_bit_index += 2
         # QCM-RF has swapped addressing of outputs
         marker_bit_index = self._fix_marker_bit_output_addressing_qcm_rf(
             qasm_program=qasm_program, marker_bit_index=marker_bit_index
         )
 
-        qasm_program.set_marker((1 << marker_bit_index) | default_marker)
-        qasm_program.emit(q1asm_instructions.UPDATE_PARAMETERS, constants.GRID_TIME)
-        qasm_program.elapsed_time += constants.GRID_TIME
-        # Wait for the duration of the pulse minus 2 times grid time, one for each upd_param.
-        qasm_program.auto_wait(duration - constants.GRID_TIME - constants.GRID_TIME)
-        qasm_program.set_marker(default_marker)
-        qasm_program.emit(q1asm_instructions.UPDATE_PARAMETERS, constants.GRID_TIME)
-        qasm_program.elapsed_time += constants.GRID_TIME
+        if self.operation_info.data["enable"]:
+            qasm_program.set_marker((1 << marker_bit_index) | default_marker)
+        else:
+            qasm_program.set_marker(default_marker)
 
     @staticmethod
     def _fix_marker_bit_output_addressing_qcm_rf(
         qasm_program: QASMProgram, marker_bit_index: int
     ):
         """Fix for the swapped marker bit output addressing of the QCM-RF."""
-        if qasm_program.static_hw_properties.instrument_type == "QCM-RF":
+        if qasm_program.static_hw_properties.instrument_type == "QCM_RF":
             if marker_bit_index == 2:
                 marker_bit_index = 3
             elif marker_bit_index == 3:

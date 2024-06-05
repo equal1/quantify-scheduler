@@ -1,8 +1,6 @@
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-
 import pprint
+
+import pytest
 
 from quantify_scheduler.backends import SerialCompiler
 
@@ -15,10 +13,10 @@ class _CompilesAllBackends:
     """
 
     def test_compiles_qblox_backend(
-        self, compile_config_basic_transmon_qblox_hardware_pulsar
+        self, compile_config_basic_transmon_qblox_hardware_cluster
     ) -> None:
         # assert that files properly compile
-        compilation_config = compile_config_basic_transmon_qblox_hardware_pulsar
+        compilation_config = compile_config_basic_transmon_qblox_hardware_cluster
         compiler = SerialCompiler(name="compiler")
         try:
             compiler.compile(schedule=self.uncomp_sched, config=compilation_config)
@@ -26,6 +24,7 @@ class _CompilesAllBackends:
             pprint.pprint(compilation_config.model_dump())
             raise
 
+    @pytest.mark.needs_zhinst
     def test_compiles_zi_backend(
         self, compile_config_basic_transmon_zhinst_hardware
     ) -> None:

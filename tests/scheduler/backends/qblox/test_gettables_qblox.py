@@ -1,11 +1,3 @@
-# pylint: disable=missing-function-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-module-docstring
-# pylint: disable=too-many-locals
-# pylint: disable=invalid-name
-# pylint: disable=unused-argument
-# pylint: disable=redefined-outer-name
-
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
 import json
@@ -28,17 +20,17 @@ from quantify_scheduler.instrument_coordinator.components.qblox import (
     ClusterComponent,
 )
 from quantify_scheduler.operations.gate_library import Reset
-from quantify_scheduler.schedules.schedule import Schedule
+from quantify_scheduler.schedules.schedule import CompiledSchedule, Schedule
 from quantify_scheduler.schedules.spectroscopy_schedules import (
     heterodyne_spec_sched,
 )
 from quantify_scheduler.schedules.timedomain_schedules import (
     t1_sched,
 )
-from tests.scheduler.backends.test_qblox_backend import (  # pylint: disable=unused-import # noqa: F401 (imported-but-unused)
+from tests.scheduler.backends.test_qblox_backend import (
     dummy_cluster,
 )
-from tests.scheduler.instrument_coordinator.components.test_qblox import (  # pylint: disable=unused-import # noqa: F401 (imported-but-unused)
+from tests.scheduler.instrument_coordinator.components.test_qblox import (
     make_cluster_component,
 )
 
@@ -113,7 +105,7 @@ def test_schedule_gettable_always_initialize_false(
     assert qrm_rf.instrument.arm_sequencer.call_count == 2
 
 
-def test_initialize_and_get_with_report_failed_initialization(  # pylint: disable=too-many-statements # noqa: PLR0915 (too-many-statements)
+def test_initialize_and_get_with_report_failed_initialization(  # noqa: PLR0915
     mock_setup_basic_transmon_with_standard_params,
     mocker,
     hardware_cfg_rf,
@@ -215,7 +207,9 @@ def test_initialize_and_get_with_report_failed_initialization(  # pylint: disabl
     )
 
     assert (
-        hardware_cfg_report[cluster_name][f"{cluster_name}_module2"]["instrument_type"]
+        hardware_cfg_report["hardware_description"][cluster_name]["modules"]["2"][
+            "instrument_type"
+        ]
         == "QCM_RF"
     )
 
@@ -246,7 +240,7 @@ def test_initialize_and_get_with_report_failed_initialization(  # pylint: disabl
     assert "failed_initialization" in os.path.basename(report_zipfile)
 
     with zipfile.ZipFile(report_zipfile, mode="r") as zf:
-        compiled_schedule_report = Schedule.from_json(
+        compiled_schedule_report = CompiledSchedule.from_json(
             zf.read("compiled_schedule.json").decode()
         )
     assert gettable.compiled_schedule == compiled_schedule_report
@@ -440,7 +434,15 @@ def test_initialize_and_get_with_report_completed_exp(
     # Prepare mock data
     acquisition_channel = 0
     data = (np.ones(50) * np.exp(1j * np.deg2rad(45))).astype(np.complex64)
-    expected_data = Dataset({acquisition_channel: (["acq_index"], data)})
+    expected_data = Dataset(
+        {
+            acquisition_channel: (
+                ["acq_index"],
+                data,
+                {"acq_protocol": "SSBIntegrationComplex"},
+            )
+        }
+    )
 
     mocker.patch.object(
         ic,

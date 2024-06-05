@@ -1,16 +1,18 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
 """Module containing Zurich Instruments InstrumentCoordinator Components."""
-# pylint: disable=useless-super-delegation
-# pylint: disable=too-many-arguments
-# pylint: disable=too-many-ancestors
+
 
 from __future__ import annotations
+
+from quantify_scheduler.compatibility_check import check_zhinst_compatibility
+
+check_zhinst_compatibility()
 
 import logging
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Hashable
 
 import xarray
 from zhinst import qcodes
@@ -54,7 +56,6 @@ class ZIInstrumentCoordinatorComponent(base.InstrumentCoordinatorComponentBase):
     def is_running(self) -> bool:
         raise NotImplementedError()
 
-    # pylint: disable=arguments-differ
     def prepare(self, zi_device_config: ZIDeviceConfig) -> bool:
         """
         Prepare the InstrumentCoordinator component with configuration
@@ -231,7 +232,6 @@ class UHFQAInstrumentCoordinatorComponent(ZIInstrumentCoordinatorComponent):
             if configure is False:
                 return False
 
-        # pylint: disable=broad-except
         # the exception being raised is "Upload failed", but the ZI backend raises it
         # as a general exception.
         except Exception as e:
@@ -277,40 +277,61 @@ class UHFQAInstrumentCoordinatorComponent(ZIInstrumentCoordinatorComponent):
             )
 
         # acq_channel_results: Dict[int, np.ndarray] = dict()
-        acq_channel_results: list[xarray.DataArray] = []
+        acq_channel_results: list[dict[Hashable, xarray.DataArray]] = []
         for acq_channel, resolve in acq_config.resolvers.items():
             data: NDArray = resolve(uhfqa=self.instrument)
             acq_protocol = acq_config.acq_protocols[acq_channel]
             if acq_protocol == "Trace" and acq_config.bin_mode == BinMode.AVERAGE:
                 acq_channel_results.append(
-                    xarray.DataArray(
-                        data.reshape((1, -1)),
-                        dims=(f"acq_index_{acq_channel}", f"trace_index_{acq_channel}"),
-                        name=acq_channel,
-                    )
+                    {
+                        acq_channel: xarray.DataArray(
+                            data.reshape((1, -1)),
+                            dims=(
+                                f"acq_index_{acq_channel}",
+                                f"trace_index_{acq_channel}",
+                            ),
+                            attrs={"acq_protocol": acq_protocol},
+                        )
+                    }
                 )
             elif (
-                acq_protocol in ("SSBIntegrationComplex", "WeightedIntegratedComplex")
+                acq_protocol
+                in (
+                    "SSBIntegrationComplex",
+                    "WeightedIntegratedSeparated",
+                    "NumericalSeparatedWeightedIntegration",
+                    "NumericalWeightedIntegration",
+                )
                 and acq_config.bin_mode == BinMode.AVERAGE
             ):
                 acq_channel_results.append(
-                    xarray.DataArray(
-                        # Sanity check: data size must be equal to n_acquisitions
-                        data.reshape((acq_config.n_acquisitions,)),
-                        dims=(f"acq_index_{acq_channel}",),
-                        name=acq_channel,
-                    )
+                    {
+                        acq_channel: xarray.DataArray(
+                            # Sanity check: data size must be equal to n_acquisitions
+                            data.reshape((acq_config.n_acquisitions,)),
+                            dims=(f"acq_index_{acq_channel}",),
+                            attrs={"acq_protocol": acq_protocol},
+                        )
+                    }
                 )
             elif (
-                acq_protocol in ("SSBIntegrationComplex", "WeightedIntegratedComplex")
+                acq_protocol
+                in (
+                    "SSBIntegrationComplex",
+                    "WeightedIntegratedSeparated",
+                    "NumericalSeparatedWeightedIntegration",
+                    "NumericalWeightedIntegration",
+                )
                 and acq_config.bin_mode == BinMode.APPEND
             ):
                 acq_channel_results.append(
-                    xarray.DataArray(
-                        data.reshape((-1, acq_config.n_acquisitions)),
-                        dims=("repetition", f"acq_index_{acq_channel}"),
-                        name=acq_channel,
-                    )
+                    {
+                        acq_channel: xarray.DataArray(
+                            data.reshape((-1, acq_config.n_acquisitions)),
+                            dims=("repetition", f"acq_index_{acq_channel}"),
+                            attrs={"acq_protocol": acq_protocol},
+                        )
+                    }
                 )
             else:
                 raise AcquisitionProtocolNotSupportedError(

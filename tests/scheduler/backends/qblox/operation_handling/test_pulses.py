@@ -1,14 +1,7 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
 """Tests for pulses module."""
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-# pylint: disable=redefined-outer-name
-# pylint: disable=unused-argument
-# pylint: disable=no-self-use
-# pylint: disable=too-many-locals
-# pylint: disable=too-many-arguments
+
 
 import re
 
@@ -23,13 +16,17 @@ from quantify_scheduler.backends.qblox.operation_handling import pulses
 from quantify_scheduler.backends.types import qblox as types
 from quantify_scheduler.helpers.waveforms import normalize_waveform_data
 from quantify_scheduler.operations.gate_library import Measure
-from quantify_scheduler.operations.pulse_library import MarkerPulse, SquarePulse
+from quantify_scheduler.operations.pulse_library import (
+    IdlePulse,
+    MarkerPulse,
+    SquarePulse,
+)
 from quantify_scheduler.resources import ClockResource
-from tests.scheduler.instrument_coordinator.components.test_qblox import (  # pylint: disable=unused-import
+from tests.scheduler.instrument_coordinator.components.test_qblox import (
     make_cluster_component,
 )
 
-from .empty_qasm_program import (  # pylint: disable=unused-import
+from .empty_qasm_program import (
     fixture_empty_qasm_program,
 )
 
@@ -111,7 +108,8 @@ class TestGenericPulseStrategy:
             "duration": duration,
             "G_amp": 0.1234,
             "D_amp": 1,
-            "nr_sigma": 3,
+            "nr_sigma": 4,
+            "sigma": None,
             "phase": 0,
         }
 
@@ -133,8 +131,7 @@ class TestGenericPulseStrategy:
         waveform0_data = waveforms_generated[0]["data"]
         waveform1_data = waveforms_generated[1]["data"]
         del data["wf_func"]
-        # pylint: disable=unexpected-keyword-arg
-        # pylint doesn't understand the del so it thinks we are passing wf_func
+
         normalized_data, amp_real, amp_imag = normalize_waveform_data(
             waveforms.drag(t=t_test, **data)
         )
@@ -153,7 +150,8 @@ class TestGenericPulseStrategy:
             "duration": duration,
             "G_amp": 0.1234,
             "D_amp": 1,
-            "nr_sigma": 3,
+            "nr_sigma": 4,
+            "sigma": None,
             "phase": 0,
         }
 
@@ -176,7 +174,7 @@ class TestGenericPulseStrategy:
             "an output marked as real.\n\nException caused by Pulse "
             "test_pulse_name (t=0 to 2.4e-08)\ndata={'wf_func': "
             "'quantify_scheduler.waveforms.drag', 'duration': 2.4e-08, '"
-            "G_amp': 0.1234, 'D_amp': 1, 'nr_sigma': 3, 'phase': 0}."
+            "G_amp': 0.1234, 'D_amp': 1, 'nr_sigma': 4, 'sigma': None, 'phase': 0}."
         )
 
     def test_insert_qasm(self, empty_qasm_program_qcm):
@@ -188,6 +186,7 @@ class TestGenericPulseStrategy:
             "D_amp": 1.0,
             "duration": 24e-9,
             "nr_sigma": 3,
+            "sigma": None,
             "phase": 0,
         }
         data = {"wf_func": wf_func_path, "duration": duration, **wf_kwargs}
@@ -222,7 +221,7 @@ class TestMarkerPulseStrategy:
             "G_amp": 1.0,
             "D_amp": 1.0,
             "duration": 24e-9,
-            "nr_sigma": 3,
+            "nr_sigma": 4,
             "phase": 0,
         }
         data = {"wf_func": wf_func_path, "duration": duration, **wf_kwargs}
@@ -266,7 +265,7 @@ class TestMarkerPulseStrategy:
         )
 
         # act
-        # pylint: disable=assignment-from-none
+
         # this is what we want to verify
         data = strategy.generate_data({})
 
@@ -277,23 +276,22 @@ class TestMarkerPulseStrategy:
         self, mock_setup_basic_transmon_with_standard_params, make_cluster_component
     ):
         hardware_cfg = {
-            "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
-            "cluster0": {
-                "ref": "internal",
-                "instrument_type": "Cluster",
-                "cluster0_module1": {
-                    "instrument_type": "QRM",
-                    "complex_input_0": {
-                        "portclock_configs": [
-                            {"port": "q0:res", "clock": "q0.ro"},
-                        ],
+            "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+            "hardware_description": {
+                "cluster0": {
+                    "instrument_type": "Cluster",
+                    "modules": {
+                        "1": {"instrument_type": "QRM", "digital_output_1": {}}
                     },
-                    "digital_output_1": {
-                        "portclock_configs": [
-                            {"port": "q0:switch"},
-                        ],
-                    },
-                },
+                    "ref": "internal",
+                }
+            },
+            "hardware_options": {},
+            "connectivity": {
+                "graph": [
+                    ["cluster0.module1.complex_input_0", "q0:res"],
+                    ["cluster0.module1.digital_output_1", "q0:switch"],
+                ]
             },
         }
 
@@ -349,25 +347,24 @@ class TestMarkerPulseStrategy:
         self, mock_setup_basic_transmon_with_standard_params, make_cluster_component
     ):
         hardware_cfg = {
-            "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
-            "cluster0": {
-                "ref": "internal",
-                "instrument_type": "Cluster",
-                "cluster0_module1": {
-                    "instrument_type": "QCM_RF",
-                    "complex_output_0": {
-                        "portclock_configs": [
-                            {"port": "q0:res", "clock": "q0.ro", "interm_freq": 0},
-                        ],
+            "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+            "hardware_description": {
+                "cluster0": {
+                    "instrument_type": "Cluster",
+                    "modules": {
+                        "1": {"instrument_type": "QCM_RF", "digital_output_1": {}}
                     },
-                    "digital_output_1": {
-                        "portclock_configs": [
-                            {
-                                "port": "q0:switch",
-                            },
-                        ],
-                    },
-                },
+                    "ref": "internal",
+                }
+            },
+            "hardware_options": {
+                "modulation_frequencies": {"q0:res-q0.ro": {"interm_freq": 0}}
+            },
+            "connectivity": {
+                "graph": [
+                    ["cluster0.module1.complex_output_0", "q0:res"],
+                    ["cluster0.module1.digital_output_1", "q0:switch"],
+                ]
             },
         }
 
@@ -420,27 +417,27 @@ class TestMarkerPulseStrategy:
 
     def test_marker_pulse_added_to_operation(self):
         hw_config = {
-            "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
-            "cluster0": {
-                "ref": "internal",
-                "instrument_type": "Cluster",
-                "cluster0_module1": {
-                    "instrument_type": "QCM_RF",
-                    "complex_output_0": {
-                        "portclock_configs": [
-                            {"port": "q0:mw", "clock": "q0.01", "interm_freq": 100e6},
-                        ],
+            "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+            "hardware_description": {
+                "cluster0": {
+                    "instrument_type": "Cluster",
+                    "modules": {
+                        "1": {"instrument_type": "QCM_RF", "digital_output_1": {}}
                     },
-                    "digital_output_1": {
-                        "portclock_configs": [
-                            {
-                                "port": "q0:switch",
-                            },
-                        ],
-                    },
-                },
+                    "ref": "internal",
+                }
+            },
+            "hardware_options": {
+                "modulation_frequencies": {"q0:mw-q0.01": {"interm_freq": 100000000.0}}
+            },
+            "connectivity": {
+                "graph": [
+                    ["cluster0.module1.complex_output_0", "q0:mw"],
+                    ["cluster0.module1.digital_output_1", "q0:switch"],
+                ]
             },
         }
+
         quantum_device = QuantumDevice("marker_test_device")
         quantum_device.hardware_config(hw_config)
 
@@ -454,6 +451,7 @@ class TestMarkerPulseStrategy:
             MarkerPulse(duration=100e-9, port="q0:switch", t0=40e-9)
         )
         schedule.add(square_pulse_op)
+        schedule.add(IdlePulse(4e-9))
 
         # Generate compiled schedule
         compiler = SerialCompiler(name="compiler")

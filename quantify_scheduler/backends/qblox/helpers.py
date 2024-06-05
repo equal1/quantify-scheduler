@@ -1,26 +1,24 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
 """Helper functions for Qblox backend."""
+from __future__ import annotations
+
 import dataclasses
 import math
-import re
 import warnings
 from collections import defaultdict
 from copy import deepcopy
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from quantify_core.utilities import deprecated
-from quantify_core.utilities.general import without
-from quantify_scheduler import Schedule
-from quantify_scheduler.backends.graph_compilation import CompilationConfig
 from quantify_scheduler.backends.qblox import constants
 from quantify_scheduler.backends.qblox.enums import ChannelMode
 from quantify_scheduler.backends.types.qblox import (
     ComplexChannelDescription,
     ComplexInputGain,
     OpInfo,
+    QbloxHardwareDistortionCorrection,
     RealChannelDescription,
     RealInputGain,
 )
@@ -28,17 +26,20 @@ from quantify_scheduler.helpers.collections import (
     find_all_port_clock_combinations,
     find_port_clock_path,
 )
-from quantify_scheduler.helpers.schedule import (
-    _extract_port_clocks_used,
-    extract_acquisition_metadata_from_acquisition_protocols,
-)
+from quantify_scheduler.helpers.schedule import _extract_port_clocks_used
 from quantify_scheduler.helpers.waveforms import exec_waveform_function
+from quantify_scheduler.operations.operation import Operation
 from quantify_scheduler.operations.pulse_library import WindowOperation
-from quantify_scheduler.schedules.schedule import AcquisitionMetadata
+from quantify_scheduler.resources import DigitalClockResource
+from quantify_scheduler.schedules.schedule import Schedule, ScheduleBase
+
+if TYPE_CHECKING:
+    from quantify_scheduler.backends.graph_compilation import CompilationConfig
+    from quantify_scheduler.backends.qblox.instrument_compilers import ClusterCompiler
 
 
 def generate_waveform_data(
-    data_dict: dict, sampling_rate: float, duration: Optional[float] = None
+    data_dict: dict, sampling_rate: float, duration: float | None = None
 ) -> np.ndarray:
     """
     Generates an array using the parameters specified in ``data_dict``.
@@ -85,7 +86,7 @@ def generate_waveform_data(
     return wf_data
 
 
-def generate_waveform_names_from_uuid(uuid: Any) -> Tuple[str, str]:
+def generate_waveform_names_from_uuid(uuid: Any) -> tuple[str, str]:
     """
     Generates names for the I and Q parts of the complex waveform based on a unique
     identifier for the pulse/acquisition.
@@ -127,8 +128,8 @@ def generate_uuid_from_wf_data(wf_data: np.ndarray, decimals: int = 12) -> str:
 
 
 def add_to_wf_dict_if_unique(
-    wf_dict: Dict[str, Any], waveform: np.ndarray
-) -> Tuple[Dict[str, Any], str, int]:
+    wf_dict: dict[str, Any], waveform: np.ndarray
+) -> tuple[dict[str, Any], str, int]:
     """
     Adds a waveform to the waveform dictionary if it is not yet in there and returns the
     uuid and index. If it is already present it simply returns the uuid and index.
@@ -150,7 +151,7 @@ def add_to_wf_dict_if_unique(
         The index.
     """
 
-    def generate_entry(name: str, data: np.ndarray, idx: int) -> Dict[str, Any]:
+    def generate_entry(name: str, data: np.ndarray, idx: int) -> dict[str, Any]:
         return {name: {"data": data.tolist(), "index": idx}}
 
     def find_first_free_wf_index():
@@ -172,7 +173,7 @@ def add_to_wf_dict_if_unique(
     return index
 
 
-def generate_waveform_dict(waveforms_complex: Dict[str, np.ndarray]) -> Dict[str, dict]:
+def generate_waveform_dict(waveforms_complex: dict[str, np.ndarray]) -> dict[str, dict]:
     """
     Takes a dictionary with complex waveforms and generates a new dictionary with
     real valued waveforms with a unique index, as required by the hardware.
@@ -292,32 +293,6 @@ def is_multiple_of_grid_time(
     return True
 
 
-def is_within_half_grid_time(a, b, grid_time_ns: int = constants.GRID_TIME):
-    """
-    Determine whether two time values in seconds are within half grid time of each other.
-
-    Parameters
-    ----------
-    a
-        A time value in seconds.
-    b
-        A time value in seconds.
-    grid_time_ns
-        The grid time to use in nanoseconds.
-
-    Returns
-    -------
-    :
-        ``True`` if ``a`` and ``b``  are less than half grid time apart, ``False`` otherwise.
-    """
-    tolerance = 0.5e-9 * grid_time_ns
-    within_half_grid_time = math.isclose(
-        a, b, abs_tol=tolerance, rel_tol=0
-    )  # rel_tol=0 results in: abs(a-b) <= max(0, abs_tol)
-
-    return within_half_grid_time
-
-
 def get_nco_phase_arguments(phase_deg: float) -> int:
     """
     Converts a phase in degrees to the int arguments the NCO phase instructions expect.
@@ -381,8 +356,8 @@ class Frequencies:
     """Holds and validates frequencies."""
 
     clock: float
-    LO: Optional[float] = None
-    IF: Optional[float] = None
+    LO: float | None = None
+    IF: float | None = None
 
     def __post_init__(self):
         if self.LO is not None and math.isnan(self.LO):
@@ -403,7 +378,7 @@ class Frequencies:
 
 def determine_clock_lo_interm_freqs(
     freqs: Frequencies,
-    downconverter_freq: Optional[float] = None,
+    downconverter_freq: float | None = None,
     mix_lo: bool = True,
 ) -> Frequencies:
     r"""
@@ -514,8 +489,8 @@ def determine_clock_lo_interm_freqs(
 
 
 def generate_port_clock_to_device_map(
-    hardware_cfg: Dict[str, Any]
-) -> Dict[Tuple[str, str], str]:
+    hardware_cfg: dict[str, Any]
+) -> dict[tuple[str, str], str]:
     """
     Generates a mapping that specifies which port-clock combinations belong to which
     device.
@@ -561,16 +536,30 @@ def generate_port_clock_to_device_map(
     return portclock_map
 
 
-# pylint: disable=too-many-locals
-# pylint: disable=too-many-branches
+def _get_list_of_operations_for_op_info_creation(
+    operation: Operation | Schedule,
+    time_offset: float,
+    accumulator: list[tuple[float, Operation]],
+) -> None:
+    if isinstance(operation, ScheduleBase):
+        for schedulable in operation.schedulables.values():
+            abs_time = schedulable["abs_time"]
+            inner_operation = operation.operations[schedulable["operation_id"]]
+            _get_list_of_operations_for_op_info_creation(
+                inner_operation, time_offset + abs_time, accumulator
+            )
+    else:
+        accumulator.append((time_offset, operation))
+
+
 def assign_pulse_and_acq_info_to_devices(
     schedule: Schedule,
-    device_compilers: Dict[str, Any],
-    hardware_cfg: Dict[str, Any],
+    device_compilers: dict[str, ClusterCompiler],
+    hardware_cfg: dict[str, Any],
 ):
     """
     Traverses the schedule and generates `OpInfo` objects for every pulse and
-    acquisition, and assigns it to the correct `InstrumentCompiler`.
+    acquisition, and assigns it to the correct `ClusterCompiler`.
 
     Parameters
     ----------
@@ -595,21 +584,24 @@ def assign_pulse_and_acq_info_to_devices(
     """
     portclock_mapping = generate_port_clock_to_device_map(hardware_cfg)
 
-    for schedulable in schedule.schedulables.values():
-        op_hash = schedulable["operation_id"]
-        op_data = schedule.operations[op_hash]
+    list_of_operations: list[tuple[float, Operation]] = list()
+    _get_list_of_operations_for_op_info_creation(schedule, 0, list_of_operations)
+
+    for operation_start_time, op_data in list_of_operations:
+        # FIXME #461 Help the type checker. Schedule should have been flattened at this
+        # point.
+        assert isinstance(op_data, Operation)
 
         if isinstance(op_data, WindowOperation):
             continue
 
         if not op_data.valid_pulse and not op_data.valid_acquisition:
             raise RuntimeError(
-                f"Operation {op_hash} is not a valid pulse or acquisition. Please check"
+                f"Operation is not a valid pulse or acquisition. Please check"
                 f" whether the device compilation been performed successfully. "
                 f"Operation data: {repr(op_data)}"
             )
 
-        operation_start_time = schedulable["abs_time"]
         for pulse_data in op_data.data["pulse_info"]:
             if "t0" in pulse_data:
                 pulse_start_time = operation_start_time + pulse_data["t0"]
@@ -645,9 +637,9 @@ def assign_pulse_and_acq_info_to_devices(
             if port is None:
                 # Distribute clock operations to all sequencers utilizing that clock
                 for (map_port, map_clock), device_name in portclock_mapping.items():
-                    if map_clock == clock:
-                        device_compilers[device_name].add_pulse(
-                            port=map_port, clock=clock, pulse_info=combined_data
+                    if (combined_data.name == "LatchReset") or map_clock == clock:
+                        device_compilers[device_name].add_op_info(
+                            port=map_port, clock=map_clock, op_info=combined_data
                         )
             else:
                 if (port, clock) not in portclock_mapping:
@@ -659,8 +651,8 @@ def assign_pulse_and_acq_info_to_devices(
                         f"Relevant operation:\n{combined_data}."
                     )
                 device_name = portclock_mapping[(port, clock)]
-                device_compilers[device_name].add_pulse(
-                    port=port, clock=clock, pulse_info=combined_data
+                device_compilers[device_name].add_op_info(
+                    port=port, clock=clock, op_info=combined_data
                 )
 
         for acq_data in op_data.data["acquisition_info"]:
@@ -674,11 +666,6 @@ def assign_pulse_and_acq_info_to_devices(
 
             if port is None:
                 continue
-
-            hashed_dict = without(acq_data, ["t0", "waveforms"])
-            hashed_dict["waveforms"] = []
-            for acq in acq_data["waveforms"]:
-                hashed_dict["waveforms"].append(acq)
 
             combined_data = OpInfo(
                 name=op_data.data["name"],
@@ -695,79 +682,14 @@ def assign_pulse_and_acq_info_to_devices(
                     f"Relevant operation:\n{combined_data}."
                 )
             device_name = portclock_mapping[(port, clock)]
-            device_compilers[device_name].add_acquisition(
-                port=port, clock=clock, acq_info=combined_data
+            device_compilers[device_name].add_op_info(
+                port=port, clock=clock, op_info=combined_data
             )
 
 
-@deprecated(
-    "0.17.0",
-    "`convert_hw_config_to_portclock_configs_spec` will be removed in a future "
-    "version.",
-)
-def convert_hw_config_to_portclock_configs_spec(
-    hw_config: Dict[str, Any],
-) -> Dict[str, Any]:
-    """
-    Converts possibly old hardware configs to the new format introduced by
-    the new dynamic sequencer allocation feature.
-
-    Manual assignment between sequencers and port-clock combinations under each output
-    is removed, and instead only a list of port-clock configurations is specified,
-    under the new ``"portclock_configs"`` key.
-
-    Furthermore, we scan for ``"latency_correction"`` defined at sequencer or
-    portclock_configs level and store under ``"port:clock"`` under toplevel
-    ``"latency_corrections"`` key.
-
-    Parameters
-    ----------
-    hw_config
-        The hardware config to be upgraded to the new specification.
-
-    Returns
-    -------
-    :
-        A hardware config compatible with the specification required by the new
-        dynamic sequencer allocation feature.
-
-    """
-
-    def _update_hw_config(nested_dict, max_depth=4):
-        if max_depth == 0:
-            return
-        # List is needed because the dictionary keys are changed during recursion
-        for key, value in list(nested_dict.items()):
-            if isinstance(key, str) and re.match(r"^seq\d+$", key):
-                nested_dict["portclock_configs"] = nested_dict.get(
-                    "portclock_configs", []
-                )
-                # Move latency_corrections to parent level of hw_config
-                if "latency_correction" in value.keys():
-                    hw_config["latency_corrections"] = hw_config.get(
-                        "latency_corrections", {}
-                    )
-                    latency_correction_key = f"{value['port']}-{value['clock']}"
-                    hw_config["latency_corrections"][latency_correction_key] = value[
-                        "latency_correction"
-                    ]
-                    del value["latency_correction"]
-
-                nested_dict["portclock_configs"].append(value)
-                del nested_dict[key]
-
-            elif isinstance(value, dict):
-                _update_hw_config(value, max_depth - 1)
-
-    hw_config = deepcopy(hw_config)
-    _update_hw_config(hw_config)
-
-    return hw_config
-
-
 def calc_from_units_volt(
-    voltage_range, name: str, param_name: str, cfg: Dict[str, Any]
-) -> Optional[float]:
+    voltage_range, name: str, param_name: str, cfg: dict[str, Any]
+) -> float | None:
     """
     Helper method to calculate the offset from mV or V.
     Then compares to given voltage range, and throws a ValueError if out of bounds.
@@ -795,7 +717,7 @@ def calc_from_units_volt(
         outside the allowed range.
 
     """
-    offset_in_config = cfg.get(param_name, None)  # Always in volts
+    offset_in_config = cfg.get(param_name)  # Always in volts
     if offset_in_config is None:
         return None
 
@@ -822,20 +744,6 @@ def calc_from_units_volt(
         )
 
     return calculated_offset
-
-
-def extract_acquisition_metadata_from_acquisitions(
-    acquisitions: List[OpInfo], repetitions: int
-) -> AcquisitionMetadata:
-    """
-    Variant of
-    :func:`~quantify_scheduler.helpers.schedule.extract_acquisition_metadata_from_acquisition_protocols`
-    for use with the Qblox backend.
-    """
-    return extract_acquisition_metadata_from_acquisition_protocols(
-        acquisition_protocols=[acq.data for acq in acquisitions],
-        repetitions=repetitions,
-    )
 
 
 def single_scope_mode_acquisition_raise(sequencer_0, sequencer_1, module_name):
@@ -866,7 +774,9 @@ def single_scope_mode_acquisition_raise(sequencer_0, sequencer_1, module_name):
     )
 
 
-def generate_hardware_config(schedule: Schedule, compilation_config: CompilationConfig):
+def _generate_legacy_hardware_config(
+    schedule: Schedule, compilation_config: CompilationConfig
+) -> dict[str, Any]:
     """
     Extract the old-style Qblox hardware config from the CompilationConfig.
 
@@ -900,8 +810,11 @@ def generate_hardware_config(schedule: Schedule, compilation_config: Compilation
             return
         for k in nested_dict:
             if k.startswith(ChannelMode.DIGITAL):
-                nested_dict[k]["portclock_configs"][0]["clock"] = ChannelMode.DIGITAL
-            elif isinstance(nested_dict[k], Dict):
+                if "clock" not in nested_dict[k]["portclock_configs"][0]:
+                    nested_dict[k]["portclock_configs"][0][
+                        "clock"
+                    ] = DigitalClockResource.IDENTITY
+            elif isinstance(nested_dict[k], dict):
                 _recursive_digital_channel_search(nested_dict[k], max_depth - 1)
 
     def _propagate_channel_description_settings(
@@ -918,6 +831,10 @@ def generate_hardware_config(schedule: Schedule, compilation_config: Compilation
             "real_output_3",
             "real_input_0",
             "real_input_1",
+            "digital_output_0",
+            "digital_output_1",
+            "digital_output_2",
+            "digital_output_3",
         ]:
             if (channel_description := getattr(description, key, None)) is None:
                 # No channel description to set
@@ -928,8 +845,12 @@ def generate_hardware_config(schedule: Schedule, compilation_config: Compilation
                 continue
 
             config[key][
-                "marker_debug_mode_enable"
-            ] = channel_description.marker_debug_mode_enable
+                "distortion_correction_latency_compensation"
+            ] = channel_description.distortion_correction_latency_compensation
+            if ChannelMode.DIGITAL not in key:
+                config[key][
+                    "marker_debug_mode_enable"
+                ] = channel_description.marker_debug_mode_enable
             if ChannelMode.COMPLEX in key:
                 config[key]["mix_lo"] = channel_description.mix_lo
                 config[key][
@@ -956,7 +877,7 @@ def generate_hardware_config(schedule: Schedule, compilation_config: Compilation
         "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile"
     }
 
-    port_clocks = _extract_port_clocks_used(schedule=schedule)
+    port_clocks = _extract_port_clocks_used(operation=schedule)
 
     # Add connectivity information to the hardware config:
     connectivity_graph = (
@@ -1010,8 +931,6 @@ def generate_hardware_config(schedule: Schedule, compilation_config: Compilation
     for instr_name, instr_description in hardware_description.items():
         if instr_description.instrument_type not in [
             "Cluster",
-            "Pulsar_QCM",
-            "Pulsar_QRM",
             "LocalOscillator",
         ]:
             # Only generate hardware config entries for supported instruments,
@@ -1033,11 +952,6 @@ def generate_hardware_config(schedule: Schedule, compilation_config: Compilation
                 instr_config[key] = getattr(instr_description, key)
             except AttributeError:
                 pass
-
-        # Propagate channel description settings for Pulsars
-        _propagate_channel_description_settings(
-            config=instr_config, description=instr_description
-        )
 
         if instr_description.instrument_type == "Cluster":
             for (
@@ -1070,9 +984,32 @@ def generate_hardware_config(schedule: Schedule, compilation_config: Compilation
             "latency_corrections"
         ]
     if hardware_options.distortion_corrections is not None:
-        hardware_config["distortion_corrections"] = hardware_options.model_dump()[
-            "distortion_corrections"
-        ]
+        hardware_config["distortion_corrections"] = {}
+        used_keys = [f"{port}-{clock}" for port, clock in port_clocks]
+        for key in hardware_options.distortion_corrections:
+            if key not in used_keys:
+                warnings.warn(
+                    f"Distortion correction portclock {key} is not used in the schedule."
+                )
+            distortion_correction = hardware_options.distortion_corrections[key]
+            if isinstance(distortion_correction, list):
+                distortion_correction_list = []
+                for dc in distortion_correction:
+                    dc_dict = dc.model_dump()
+                    dc_dict["correction_type"] = "qblox"
+                    distortion_correction_list.append(dc_dict)
+                # Set the distortion correction in the hardware config:
+                hardware_config["distortion_corrections"][
+                    key
+                ] = distortion_correction_list
+            else:
+                distortion_correction_dict = distortion_correction.model_dump()
+                if isinstance(distortion_correction, QbloxHardwareDistortionCorrection):
+                    distortion_correction_dict["correction_type"] = "qblox"
+                # Set the distortion correction in the hardware config:
+                hardware_config["distortion_corrections"][
+                    key
+                ] = distortion_correction_dict
 
     # Set Hardware Options for all port-clock combinations in the Schedule:
     if hardware_options.modulation_frequencies is not None:
@@ -1163,24 +1100,15 @@ def generate_hardware_config(schedule: Schedule, compilation_config: Compilation
                 channel_config = channel_config[key]
             channel_name = pc_path[-3]
 
-            if not (
-                channel_name.startswith(ChannelMode.COMPLEX)
-                or channel_name.startswith(ChannelMode.REAL)
-            ):
-                raise KeyError(
-                    f"The name of channel {pc_path[:-2]} used for {port=} and {clock=} must start "
-                    f"with either 'real' or 'complex'."
-                )
-
             # Set the input_gain in the channel config:
             if isinstance(pc_input_gain, ComplexInputGain):
                 channel_config["input_gain_I"] = pc_input_gain.gain_I
                 channel_config["input_gain_Q"] = pc_input_gain.gain_Q
             elif isinstance(pc_input_gain, RealInputGain):
                 if channel_name == "real_output_0":
-                    channel_config["input_gain_0"] = pc_input_gain.gain
+                    channel_config["input_gain_0"] = pc_input_gain
                 elif channel_name == "real_output_1":
-                    channel_config["input_gain_1"] = pc_input_gain.gain
+                    channel_config["input_gain_1"] = pc_input_gain
 
     output_att = hardware_options.output_att
     if output_att is not None:
@@ -1244,18 +1172,18 @@ def generate_hardware_config(schedule: Schedule, compilation_config: Compilation
                 pc_config = pc_config[key]
 
             pc_config["ttl_acq_threshold"] = pc_sequencer_options.ttl_acq_threshold
-            pc_config[
-                "init_offset_awg_path_I"
-            ] = pc_sequencer_options.init_offset_awg_path_I
-            pc_config[
-                "init_offset_awg_path_Q"
-            ] = pc_sequencer_options.init_offset_awg_path_Q
-            pc_config[
-                "init_gain_awg_path_I"
-            ] = pc_sequencer_options.init_gain_awg_path_I
-            pc_config[
-                "init_gain_awg_path_Q"
-            ] = pc_sequencer_options.init_gain_awg_path_Q
+            pc_config["init_offset_awg_path_I"] = (
+                pc_sequencer_options.init_offset_awg_path_I
+            )
+            pc_config["init_offset_awg_path_Q"] = (
+                pc_sequencer_options.init_offset_awg_path_Q
+            )
+            pc_config["init_gain_awg_path_I"] = (
+                pc_sequencer_options.init_gain_awg_path_I
+            )
+            pc_config["init_gain_awg_path_Q"] = (
+                pc_sequencer_options.init_gain_awg_path_Q
+            )
             pc_config["qasm_hook_func"] = pc_sequencer_options.qasm_hook_func
 
     # Add digital clock to digital channels, so that users don't have to specify it.
@@ -1264,14 +1192,27 @@ def generate_hardware_config(schedule: Schedule, compilation_config: Compilation
     return hardware_config
 
 
+def find_channel_names(instrument_config: dict[str, Any]) -> list[str]:
+    """Find all channel names within this Qblox instrument config dict."""
+    channel_names = []
+    for channel_name, channel_cfg in instrument_config.items():
+        try:
+            if "portclock_configs" in channel_cfg.keys():
+                channel_names.append(channel_name)
+        except AttributeError:
+            pass
+
+    return channel_names
+
+
 def _preprocess_legacy_hardware_config(
-    hardware_config: Dict[str, Any]
-) -> Dict[str, Any]:
+    hardware_config: dict[str, Any]
+) -> dict[str, Any]:
     """Modify a legacy hardware config into a form that is compatible with the current backend."""
 
     def _modify_inner_dicts(
-        config: Dict[str, Any], target_key: str, value_modifier: Callable
-    ) -> Dict[str, Any]:
+        config: dict[str, Any], target_key: str, value_modifier: Callable
+    ) -> dict[str, Any]:
         for key, value in config.items():
             if key == target_key:
                 config[key] = value_modifier(value)
@@ -1283,8 +1224,8 @@ def _preprocess_legacy_hardware_config(
         return config
 
     def _replace_deprecated_portclock_keys(
-        portclock_configs: List[Dict],
-    ) -> List[Dict]:
+        portclock_configs: list[dict],
+    ) -> list[dict]:
         for portclock_config in portclock_configs:
             for deprecated_key, updated_key in {
                 "init_offset_awg_path_0": "init_offset_awg_path_I",
@@ -1471,23 +1412,75 @@ def _generate_new_style_hardware_compilation_config(
         new_style_config["hardware_description"][cluster_name]["modules"][
             module_slot_idx
         ][channel_name] = {}
+        port_name = f"{cluster_name}.module{module_slot_idx}.{channel_name}"
         for (
             channel_cfg_key,
             channel_cfg_value,
         ) in old_channel_config.items():
+            # Find attached port-clock combinations:
+            channel_port_clocks = [
+                f"{pc_cfg['port']}-{pc_cfg['clock']}"
+                for pc_cfg in old_channel_config["portclock_configs"]
+            ]
             if channel_cfg_key == "marker_debug_mode_enable":
                 new_style_config["hardware_description"][cluster_name]["modules"][
                     module_slot_idx
                 ][channel_name][channel_cfg_key] = channel_cfg_value
+            elif channel_cfg_key in ("input_gain_0", "input_gain_1"):
+                # Set input gains for all port-clock combinations
+                for port_clock in channel_port_clocks:
+                    new_style_config["hardware_options"]["input_gain"][
+                        port_clock
+                    ] = channel_cfg_value
+            elif channel_cfg_key == "lo_name":
+                # Add IQ mixer to the hardware_description:
+                new_style_config["hardware_description"][
+                    f"iq_mixer_{channel_cfg_value}"
+                ] = {"instrument_type": "IQMixer"}
+                # Add LO and IQ mixer to connectivity graph:
+                new_style_config["connectivity"]["graph"].extend(
+                    [
+                        (
+                            port_name,
+                            f"iq_mixer_{channel_cfg_value}.if",
+                        ),
+                        (
+                            f"{channel_cfg_value}.output",
+                            f"iq_mixer_{channel_cfg_value}.lo",
+                        ),
+                    ]
+                )
+                # Overwrite port_name to IQ mixer RF output:
+                port_name = f"iq_mixer_{channel_cfg_value}.rf"
+                if "frequency" in old_style_config[channel_cfg_value]:
+                    # Set lo_freq for all port-clock combinations (external LO)
+                    for port_clock in channel_port_clocks:
+                        new_style_config["hardware_options"]["modulation_frequencies"][
+                            port_clock
+                        ]["lo_freq"] = old_style_config[channel_cfg_value]["frequency"]
             elif channel_cfg_key == "portclock_configs":
                 # Add connectivity information to connectivity graph:
                 for portclock_cfg in channel_cfg_value:
                     new_style_config["connectivity"]["graph"].append(
                         (
-                            f"{cluster_name}.module{module_slot_idx}.{channel_name}",
+                            port_name,
                             f"{portclock_cfg['port']}",
                         )
                     )
+                    if "init_gain_awg_path_I" in portclock_cfg:
+                        # Set init gain from portclock config:
+                        new_style_config["hardware_options"]["sequencer_options"][
+                            port_clock
+                        ]["init_gain_awg_path_I"] = portclock_cfg.pop(
+                            "init_gain_awg_path_I"
+                        )
+                    if "init_gain_awg_path_Q" in portclock_cfg:
+                        # Set init gain from portclock config:
+                        new_style_config["hardware_options"]["sequencer_options"][
+                            port_clock
+                        ]["init_gain_awg_path_Q"] = portclock_cfg.pop(
+                            "init_gain_awg_path_Q"
+                        )
 
     def _convert_digital_channel_config(
         cluster_name: str,
@@ -1529,11 +1522,20 @@ def _generate_new_style_hardware_compilation_config(
                     module_slot_idx
                 ][module_cfg_key] = module_cfg_value
             elif module_cfg_key.startswith("complex_"):
+                # Portclock configs dict must be last item in dict for correct conversion
+                old_channel_config = {
+                    k: v
+                    for k, v in module_cfg_value.items()
+                    if k != "portclock_configs"
+                }
+                old_channel_config["portclock_configs"] = module_cfg_value[
+                    "portclock_configs"
+                ]
                 _convert_complex_channel_config(
                     cluster_name=cluster_name,
                     module_slot_idx=module_slot_idx,
                     channel_name=module_cfg_key,
-                    old_channel_config=module_cfg_value,
+                    old_channel_config=old_channel_config,
                     new_style_config=new_style_config,
                 )
                 # Remove channel description if only default values are set
@@ -1550,6 +1552,15 @@ def _generate_new_style_hardware_compilation_config(
                         module_slot_idx
                     ].pop(module_cfg_key)
             elif module_cfg_key.startswith("real_"):
+                # Portclock configs dict must be last item in dict for correct conversion
+                old_channel_config = {
+                    k: v
+                    for k, v in module_cfg_value.items()
+                    if k != "portclock_configs"
+                }
+                old_channel_config["portclock_configs"] = module_cfg_value[
+                    "portclock_configs"
+                ]
                 _convert_real_channel_config(
                     cluster_name=cluster_name,
                     module_slot_idx=module_slot_idx,
@@ -1626,10 +1637,6 @@ def _generate_new_style_hardware_compilation_config(
                 cluster_name=hw_cfg_key,
                 old_cluster_config=hw_cfg_value,
                 new_style_config=new_style_config,
-            )
-        elif hw_cfg_value["instrument_type"] in ["Pulsar_QCM", "Pulsar_QRM"]:
-            raise NotImplementedError(
-                "The old-to-new hardware config conversion has not been implemented for Pulsars."
             )
         elif hw_cfg_value["instrument_type"] == "LocalOscillator":
             new_style_config["hardware_description"][hw_cfg_key] = {}

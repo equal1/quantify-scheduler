@@ -6,12 +6,12 @@ from __future__ import annotations
 
 from collections import UserDict
 
-from quantify_scheduler.json_utils import load_json_schema, validate_json
 from quantify_scheduler.helpers.collections import make_hash
+from quantify_scheduler.helpers.importers import export_python_object_to_path_string
+from quantify_scheduler.json_utils import load_json_schema, validate_json
 
 
 class Resource(UserDict):
-    # pylint: disable=line-too-long
     """
     A resource corresponds to a physical resource such as a port or a clock.
 
@@ -23,7 +23,6 @@ class Resource(UserDict):
         The resource name.
     """
 
-    # pylint: enable=line-too-long
     def __init__(self, name: str) -> None:
         super().__init__()
         self.data["name"] = name
@@ -91,7 +90,10 @@ class Resource(UserDict):
         return f"{self.__class__.__name__}(name='{self.name}')"
 
     def __getstate__(self):
-        return {"deserialization_type": self.__class__.__name__, "data": self.data}
+        return {
+            "deserialization_type": export_python_object_to_path_string(self.__class__),
+            "data": self.data,
+        }
 
     def __setstate__(self, state):
         self.data = state["data"]
@@ -153,6 +155,31 @@ class BasebandClockResource(Resource):
     """
 
     IDENTITY = "cl0.baseband"
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+
+        self.data = {
+            "name": name,
+            "type": str(self.__class__.__name__),
+            "freq": 0,
+            "phase": 0,
+        }
+
+
+class DigitalClockResource(Resource):
+    """
+    Global identity for a virtual digital clock.
+
+    Digital clocks can only be associated with digital channels.
+
+    Parameters
+    ----------
+    name :
+        the name of this clock
+    """
+
+    IDENTITY = "digital"
 
     def __init__(self, name: str) -> None:
         super().__init__(name)

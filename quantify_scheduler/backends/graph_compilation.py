@@ -20,7 +20,7 @@ from typing import (
 import matplotlib.pyplot as plt
 import networkx as nx
 from matplotlib.axes import Axes
-from pydantic import field_serializer, field_validator
+from pydantic import Field, field_serializer, field_validator
 
 from quantify_scheduler.backends.types.common import HardwareCompilationConfig
 from quantify_scheduler.helpers.importers import export_python_object_to_path_string
@@ -40,7 +40,6 @@ class CompilationError(RuntimeError):
     """Custom exception class for failures in compilation of quantify schedules."""
 
 
-# pylint: disable=too-few-public-methods
 class SimpleNodeConfig(DataStructure):
     """
     Datastructure specifying the structure of a simple compiler pass config.
@@ -78,7 +77,7 @@ class OperationCompilationConfig(DataStructure):
     defined on a quantum-device layer.
     """
 
-    factory_func: Callable[..., Operation]
+    factory_func: Callable[..., Union[Operation, Schedule]]
     """
     A callable designating a factory function used to create the representation
     of the operation at the quantum-device level.
@@ -107,7 +106,6 @@ class OperationCompilationConfig(DataStructure):
         return fun  # type: ignore
 
 
-# pylint: disable=line-too-long
 class DeviceCompilationConfig(DataStructure):
     """
     Information required to compile a schedule to the quantum-device layer.
@@ -175,14 +173,39 @@ class DeviceCompilationConfig(DataStructure):
     The scheduling strategy used when determining the absolute timing of each
     operation of the schedule.
     """
-    compilation_passes: List[SimpleNodeConfig] = []
+    compilation_passes: List[SimpleNodeConfig] = Field(
+        default=[
+            {
+                "name": "circuit_to_device",
+                "compilation_func": "quantify_scheduler.backends.circuit_to_device."
+                + "compile_circuit_to_device_with_config_validation",
+            },
+            {
+                "name": "set_pulse_and_acquisition_clock",
+                "compilation_func": "quantify_scheduler.backends.circuit_to_device."
+                + "set_pulse_and_acquisition_clock",
+            },
+            {
+                "name": "resolve_control_flow",
+                "compilation_func": "quantify_scheduler.compilation.resolve_control_flow",
+            },
+            {
+                "name": "determine_absolute_timing",
+                "compilation_func": "quantify_scheduler.compilation._determine_absolute_timing",
+            },
+            {
+                "name": "flatten",
+                "compilation_func": "quantify_scheduler.compilation.flatten_schedule",
+            },
+        ],
+        validate_default=True,
+    )
     """
     The list of compilation nodes that should be called in succession to compile a
     schedule to the quantum-device layer.
     """
 
 
-# pylint: disable=too-few-public-methods
 class CompilationConfig(DataStructure):
     """
     Base class for a compilation config.
@@ -298,7 +321,6 @@ class CompilationNode:
         return self._compilation_func(schedule=schedule, config=config)
 
 
-# pylint: disable=too-few-public-methods
 class SimpleNode(CompilationNode):
     """
     A node representing a single compilation pass.
@@ -336,7 +358,6 @@ class SimpleNode(CompilationNode):
         return self.compilation_func(schedule=schedule, config=config)
 
 
-# pylint: disable=abstract-method
 class QuantifyCompiler(CompilationNode):
     """
     A compiler for quantify :class:`~.Schedule` s.
@@ -572,7 +593,6 @@ class SerialCompiler(QuantifyCompiler):
         return CompiledSchedule(schedule)
 
 
-# pylint: disable=too-few-public-methods
 class SerialCompilationConfig(CompilationConfig):
     """
     A compilation config for a simple serial compiler.

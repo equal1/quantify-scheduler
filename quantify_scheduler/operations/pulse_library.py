@@ -1,7 +1,7 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
 """Standard pulse-level operations for use with the quantify_scheduler."""
-# pylint: disable= too-many-arguments, too-many-ancestors
+
 from __future__ import annotations
 
 import warnings
@@ -13,10 +13,9 @@ from numpy.typing import NDArray
 from qcodes import InstrumentChannel, validators
 
 from quantify_scheduler import Operation
-from quantify_scheduler.backends.qblox import constants as qblox_constants
-from quantify_scheduler.backends.qblox.enums import ChannelMode
+from quantify_scheduler.helpers.deprecation import deprecated_arg_alias
 from quantify_scheduler.helpers.waveforms import area_pulses
-from quantify_scheduler.resources import BasebandClockResource
+from quantify_scheduler.resources import BasebandClockResource, DigitalClockResource
 
 
 @dataclass
@@ -61,7 +60,7 @@ class ShiftClockPhase(Operation):
         Time in seconds when to execute the command relative
         to the start time of the Operation in the Schedule.
     duration
-        The duration of the operation in seconds.
+        (deprecated) The duration of the operation in seconds.
     """
 
     def __init__(
@@ -69,8 +68,14 @@ class ShiftClockPhase(Operation):
         phase_shift: float,
         clock: str,
         t0: float = 0,
-        duration: float = qblox_constants.NCO_SET_PH_DELTA_WAIT * 1e-9,
+        duration: float = 0.0,
     ):
+        if duration != 0.0:
+            warnings.warn(
+                "The duration parameter will be removed in quantify-scheduler >= "
+                "0.20.0, and the duration will be fixed to 0.0.",
+                FutureWarning,
+            )
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -79,7 +84,7 @@ class ShiftClockPhase(Operation):
                 "phase_shift": phase_shift,
                 "clock": clock,
                 "port": None,
-                "duration": duration,
+                "duration": 0,
             }
         ]
         self._update()
@@ -138,7 +143,7 @@ class SetClockFrequency(Operation):
         Time in seconds when to execute the command relative to the start time of
         the Operation in the Schedule.
     duration
-            The duration of the operation in seconds.
+        (deprecated) The duration of the operation in seconds.
     """
 
     def __init__(
@@ -146,8 +151,14 @@ class SetClockFrequency(Operation):
         clock: str,
         clock_freq_new: float,
         t0: float = 0,
-        duration: float = qblox_constants.NCO_SET_FREQ_WAIT * 1e-9,
+        duration: float = 0.0,
     ):
+        if duration != 0.0:
+            warnings.warn(
+                "The duration parameter will be removed in quantify-scheduler >= "
+                "0.20.0, and the duration will be fixed to 0.0.",
+                FutureWarning,
+            )
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
@@ -158,7 +169,7 @@ class SetClockFrequency(Operation):
                 "clock_freq_old": None,
                 "interm_freq_old": None,
                 "port": None,
-                "duration": duration,
+                "duration": 0,
             }
         ]
         self._update()
@@ -169,26 +180,69 @@ class SetClockFrequency(Operation):
 
 
 class VoltageOffset(Operation):
-    """Deprecated VoltageOffset."""
+    """
+    Operation that represents setting a constant offset to the output voltage.
 
-    def __new__(cls, *args, **kwargs) -> VoltageOffset:
-        """Return StitchedPulse from the new location."""
-        warnings.warn(
-            (
-                "Class quantify_scheduler.backends.qblox.operations.pulse_library.VoltageOffset is "
-                "deprecated and will be removed in quantify-scheduler-0.20.0. Use "
-                "quantify_scheduler.backends.qblox.backends.qblox.operations.pulse_library.VoltageOffset "
-                "instead."
-            ),
-            FutureWarning,
-        )
-        # Avoid circular import
-        # pylint: disable=import-outside-toplevel
-        from quantify_scheduler.backends.qblox.operations import (
-            VoltageOffset as QbloxVoltageOffset,
-        )
+    Please refer to :ref:`sec-qblox-offsets-long-voltage-offsets` in the reference guide
+    for more details.
 
-        return QbloxVoltageOffset(*args, **kwargs)
+    Parameters
+    ----------
+    offset_path_I : float
+        Offset of path I.
+    offset_path_Q : float
+        Offset of path Q.
+    port : str
+        Port of the voltage offset.
+    clock : str, optional
+        Clock used to modulate the voltage offset. By default a BasebandClock is used.
+    duration : float, optional
+        (deprecated) The time to hold the offset for (in seconds).
+    t0 : float, optional
+        Time in seconds when to start the pulses relative to the start time
+        of the Operation in the Schedule.
+    reference_magnitude :
+        Scaling value and unit for the unitless amplitude. Uses settings in
+        hardware config if not provided.
+    """
+
+    @deprecated_arg_alias(
+        "0.20.0", offset_path_0="offset_path_I", offset_path_1="offset_path_Q"
+    )
+    def __init__(
+        self,
+        offset_path_I: float,
+        offset_path_Q: float,
+        port: str,
+        clock: str = BasebandClockResource.IDENTITY,
+        duration: float = 0.0,
+        t0: float = 0,
+        reference_magnitude: ReferenceMagnitude | None = None,
+    ) -> None:
+        if duration != 0.0:
+            warnings.warn(
+                "The duration parameter will be removed in quantify-scheduler >= "
+                "0.20.0, and the duration will be fixed to 0.0.",
+                FutureWarning,
+            )
+        super().__init__(name=self.__class__.__name__)
+        self.data["pulse_info"] = [
+            {
+                "wf_func": None,
+                "t0": t0,
+                "offset_path_I": offset_path_I,
+                "offset_path_Q": offset_path_Q,
+                "clock": clock,
+                "port": port,
+                "duration": duration,
+                "reference_magnitude": reference_magnitude,
+            }
+        ]
+        self._update()
+
+    def __str__(self) -> str:
+        pulse_info = self.data["pulse_info"][0]
+        return self._get_signature(pulse_info)
 
 
 class IdlePulse(Operation):
@@ -285,7 +339,7 @@ class RampPulse(Operation):
         return self._get_signature(pulse_info)
 
 
-class StaircasePulse(Operation):  # pylint: disable=too-many-ancestors
+class StaircasePulse(Operation):
     """
     A real valued staircase pulse, which reaches it's final amplitude in discrete steps.
 
@@ -357,11 +411,13 @@ class MarkerPulse(Operation):
     duration
         Duration of the HIGH signal.
     port
-        Name of associated port.
+        Name of the associated port.
     clock
-        As digital channels technically do not have a clock, this parameter is by default
-        set to "digital". In circuit to device compilation digital channels get assigned
-        the digital clock.
+        Name of the associated clock. By default
+        :class:`~quantify_scheduler.resources.DigitalClockResource`. This only needs to
+        be specified if a custom clock name is used for a digital channel (for example,
+        when a port-clock combination of a device element is used with a digital
+        channel).
     """
 
     def __init__(
@@ -369,18 +425,17 @@ class MarkerPulse(Operation):
         duration: float,
         port: str,
         t0: float = 0,
-        clock: str = ChannelMode.DIGITAL,
+        clock: str = DigitalClockResource.IDENTITY,
     ):
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
             {
                 "wf_func": None,
+                "marker_pulse": True,  # This distinguishes MarkerPulse from other operations
                 "t0": t0,
                 "clock": clock,
                 "port": port,
-                "duration": duration
-                + qblox_constants.GRID_TIME  # Add grid time for upd_param at end of pulse
-                * 1e-9,
+                "duration": duration,
             }
         ]
         self._update()
@@ -612,7 +667,7 @@ class SoftSquarePulse(Operation):
         return self._get_signature(pulse_info)
 
 
-class ChirpPulse(Operation):  # pylint: disable=too-many-ancestors
+class ChirpPulse(Operation):
     """
     A linear chirp signal. A sinusoidal signal that ramps up in frequency.
 
@@ -671,9 +726,10 @@ class ChirpPulse(Operation):  # pylint: disable=too-many-ancestors
 
 
 class DRAGPulse(Operation):
-    # pylint: disable=line-too-long, too-many-ancestors
     r"""
     A Gaussian pulse with a derivative component added to the out-of-phase channel.
+    It uses the specified amplitude and sigma.
+    If sigma is not specified it is set to 1/4 of the duration.
 
     The DRAG pulse is intended for single qubit gates in transmon based systems.
     It can be calibrated to reduce unwanted excitations of the
@@ -699,6 +755,9 @@ class DRAGPulse(Operation):
     reference_magnitude
         Scaling value and unit for the unitless amplitude. Uses settings in
         hardware config if not provided.
+    sigma
+        Width of the Gaussian envelope in seconds. If not provided, the sigma
+        is set to 1/4 of the duration.
     t0
         Time in seconds when to start the pulses relative to the start time
         of the Operation in the Schedule.
@@ -713,6 +772,7 @@ class DRAGPulse(Operation):
         port: str,
         clock: str,
         reference_magnitude: Optional[ReferenceMagnitude] = None,
+        sigma: float = None,
         t0: float = 0,
     ):
         super().__init__(name=self.__class__.__name__)
@@ -724,7 +784,8 @@ class DRAGPulse(Operation):
                 "reference_magnitude": reference_magnitude,
                 "duration": duration,
                 "phase": phase,
-                "nr_sigma": 4,
+                "nr_sigma": 4 if sigma is None else None,
+                "sigma": sigma,
                 "clock": clock,
                 "port": port,
                 "t0": t0,
@@ -738,10 +799,10 @@ class DRAGPulse(Operation):
 
 
 class GaussPulse(Operation):
-    # pylint: disable=line-too-long, too-many-ancestors
     r"""
     The GaussPulse Operation is a real-valued pulse with the specified
-    amplitude and width 4 sigma.
+    amplitude and sigma.
+    If sigma is not specified it is set to 1/4 of the duration.
 
     The waveform is generated using :func:`.waveforms.drag` whith a D_amp set to zero, corresponding to a Gaussian pulse.
 
@@ -760,6 +821,9 @@ class GaussPulse(Operation):
     reference_magnitude
         Scaling value and unit for the unitless amplitude. Uses settings in
         hardware config if not provided.
+    sigma
+        Width of the Gaussian envelope in seconds. If not provided, the sigma
+        is set to 1/4 of the duration.
     t0
         Time in seconds when to start the pulses relative to the start time
         of the Operation in the Schedule.
@@ -773,6 +837,7 @@ class GaussPulse(Operation):
         port: str,
         clock: str,
         reference_magnitude: Optional[ReferenceMagnitude] = None,
+        sigma: float = None,
         t0: float = 0,
     ):
         super().__init__(name=self.__class__.__name__)
@@ -784,7 +849,8 @@ class GaussPulse(Operation):
                 "reference_magnitude": reference_magnitude,
                 "duration": duration,
                 "phase": phase,
-                "nr_sigma": 4,
+                "nr_sigma": 4 if sigma is None else None,
+                "sigma": sigma,
                 "clock": clock,
                 "port": port,
                 "t0": t0,
@@ -1001,7 +1067,7 @@ class NumericalPulse(Operation):
 
         super().__init__(name=self.__class__.__name__)
         self.data["pulse_info"] = [
-            {  # pylint: disable=line-too-long
+            {
                 "wf_func": "quantify_scheduler.waveforms.interpolated_complex_waveform",
                 "samples": samples,
                 "t_samples": t_samples,
@@ -1022,7 +1088,6 @@ class NumericalPulse(Operation):
 
 
 class SkewedHermitePulse(Operation):
-    # pylint: disable=line-too-long, too-many-ancestors
     """
     Hermite pulse intended for single qubit gates in diamond based systems.
 

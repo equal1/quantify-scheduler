@@ -1,18 +1,284 @@
 # Changelog
 
-## 0.18.0 (2023-12-14)
+## 0.20.1 (2024-05-01)
+
+### Breaking changes
+
+None
 
 ### Release highlights
 
-**Qblox Updates:**
-- Square pulses now support complex value pulses.
-- Marker pulse functionality corrected on RF modules.
+This release comes with an interface for configuring hardware distortion corrections but without the actual implementation of it.
 
-**General Enhancements:**
-- Numerous improvements to hardware compilation configuration:
-  - Introduced `Connectivity` data structure for mapping connections between quantum device ports and control hardware in `HardwareCompilationConfig`.
-  - Integration of third-party instruments via custom compilation nodes in hardware backends.
-  - Improved `Connectivity` to include one-to-many, many-to-one, and many-to-many connection capabilities.
+### Deprecation
+- Distortion corrections
+   - deprecate `common.DistortionCorrection` in favor of `common.SoftwareDistortionCorrection`. (!789)
+
+### Merged branches and closed issues
+- Distortion corrections
+   - deprecate `DistortionCorrection` in favor of `SoftwareDistortionCorrection`. (!789)
+   - add the interface for `QbloxHardwareDistortionCorrection`. (!789)
+- Qblox backend 
+  - Allow operations on a digital channel to take a custom clock name as n argument. If the clock name is not the default name (`"digital"`), it must be a name that is present in the device configuration, or one that is manually added to the `Schedule` as a `ClockResource`. (!967)
+  - Refactor the module and sequencer compiler classes, and add new QTM compiler classes. (!937)
+  - Change the default value of `DispersiveMeasurement.acq_weights_a` and `DispersiveMeasurement.acq_weights_b` from `None` to `np.array([], dtype=np.float64)`, so that `load_settings_onto_instrument` from `quantify-core` correctly detects that these parameters take numpy arrays. (!977)
+- Tests 
+  - Convert transmon-specific hardware configs in test suite and docs to new style. (!972)
+
+### Compatibility Info
+
+**Qblox**
+
+| quantify-scheduler |                      qblox-instruments                       |                               Cluster firmware                                |
+|--------------------|:------------------------------------------------------------:|:-----------------------------------------------------------------------------:|
+| v0.20.1            | [0.13.0](https://pypi.org/project/qblox-instruments/0.12.0/) | [0.8.0](https://gitlab.com/qblox/releases/cluster_releases/-/releases/v0.8.0) |
+| v0.20.1            | [0.12.0](https://pypi.org/project/qblox-instruments/0.12.0/) | [0.7.0](https://gitlab.com/qblox/releases/cluster_releases/-/releases/v0.7.0) |
+
+**Zurich Instruments**
+- `zhinst==21.8.20515`, `zhinst-qcodes==0.1.4`, `zhinst-toolkit==0.1.5`
+
+
+## 0.20.0 (2024-05-01)
+
+### Breaking changes
+
+The Zhinst backend is now optional, meaning that installing `quantify-scheduler` no longer installs packages that are required by this backend. For users of the Zhinst backend that want to upgrade to `v0.20.0` via `pip install --upgrade quantify-scheduler` nothing will break, but for fresh environments, you will have to run `pip install quantify-scheduler[zhinst]`.
+
+
+### Release Highlights
+
+- `sigma` is a new parameter that can be passed to the operations `GaussPulse` and `DragPulse` which sets the width of the Gaussian envelope in seconds. 
+
+- For the Qblox backend, operations are now allowed to live on a 1 ns time grid, except NCO-related instructions   (`set_ph`, `set_ph_delta`, `reset_ph` and `set_freq`) that still require to start on a 4 ns time grid.
+
+- `quantify-scheduler` is now compatible with Python 3.10, 3.11 and 3.12. The current Zhinst backend still requires 3.8 or 3.9.
+
+- Two new schedules are added to `quantify_scheduler.schedules` to perform long time-traces: `long_time_trace` and `long_time_trace_with_qubit`.
+
+- The time between uploading and executing `Schedules` to a Qblox Cluster has reduced, leading to an execution speedup for experiments.
+
+
+
+### Merged branches and closed issues
+
+- Zhinst backend
+  - make `zhinst` dependencies optional (e.g. `pip install quantify-scheduler[zhinst]`) (!887)
+
+- Operations 
+  - expose sigma to users in Gaussian pulse, also change nr_sigma of in waveforms from 3 to 4 as it is defined as 4 in pulse_library (!926)
+
+- Python
+  - `quantify-scheduler` is now compatible with Python 3.10, 3.11 and 3.12. The current zhinst backend still requires 3.8 or 3.9. (!887)
+
+- Schedules 
+  - Add `long_time_trace` and `long_time_trace_with_qubit` to perform custom integrated time traces. (!878)
+
+- Qblox backend 
+  - Speedup execution by starting and stopping all armed sequencers in a Cluster via a single call. (!876, !955)
+  - Remove the `ControlDeviceCompiler` class. (!940)
+  - Rename many classes in `compiler_abc` and `instrument_compilers` to reflect a similar naming style as the Qblox `InstrumentCoordinator` components. (!940)
+  - Explicitly split `ClusterCompiler` and `LocalOscillatorCompiler` instances in `CompilerContainer` to fix a typing issue in `assign_pulse_and_acq_info_to_devices`. (!940)
+  - Various style refactors. (!965)
+  - Apply PEP585 and PEP604 to `compiler_abc` and `instrument_compilers`.
+  - `connected_output_indices` / `connected_input_indices` can no longer be None.
+  - Clean up the `Sequencer` initialization.
+  - Move `extract_settings_from_mapping` to the parent class (`BaseModuleSettings`).
+  - Refactor hardware compilation schedule operation more consistently. (!962)
+  - Move the logic for determining and validating the `integration_length` from the `QASMProgram` to the `Sequencer` class. (!946)
+  - Keep order between pulses and acquisitions for `OpInfo` and `OpStrategy`. (!939)
+  - Move the logic for updating `SetClockFrequency` from `QbloxBaseModule.distribute_data()` partly to a new method `QbloxBaseModule._update_set_clock_frequency_operations()` and partly to a new function `quantify_scheduler.backends.qblox_backend._add_clock_freqs_to_set_clock_frequency()`. (!949)
+  - Add instrument compilers `_ClusterCompilerConfig`, `_ClusterModuleCompilerConfig` and `_LocalOscillatorCompilerConfig` to Qblox backend types, and add `_extract_instrument_compiler_configs` to `QbloxHardwareCompilationConfig`. (!956)
+
+- Schedule 
+  	- Introduce type alias update schedule serialization to make `schedulables` ordering more apparent. (!933)
+
+- Compilation 
+  - Refactor device compilation to make schedule and operation compilation more consistent. (!938)
+
+- Tests 
+  - Make transmon tests and hardware configs compatible with `QbloxHardwareCompilationConfig` validation. (!964) 
+
+- Linter
+  - Replace deprecated `numpy` definitions with `numpy` 2.0 compatible definitions. (!952)
+
+- Documentation
+  - Update dummy cluster configuration to use RF module. (!951)
+
+### Compatibility Info
+
+**Qblox**
+
+| quantify-scheduler |                      qblox-instruments                       |                               Cluster firmware                                |
+|--------------------|:------------------------------------------------------------:|:-----------------------------------------------------------------------------:|
+| v0.20.0            | [0.13.0](https://pypi.org/project/qblox-instruments/0.12.0/) | [0.8.0](https://gitlab.com/qblox/releases/cluster_releases/-/releases/v0.8.0) |
+| v0.20.0            | [0.12.0](https://pypi.org/project/qblox-instruments/0.12.0/) | [0.7.0](https://gitlab.com/qblox/releases/cluster_releases/-/releases/v0.7.0) |
+
+**Zurich Instruments**
+- `zhinst==21.8.20515`, `zhinst-qcodes==0.1.4`, `zhinst-toolkit==0.1.5`
+
+## 0.19.0 (2024-04-03)
+
+### Breaking changes
+
+- Qblox backend - Update to `qblox_instruments` version 0.12.0, requires firmware version 0.7.0. (!942)
+
+### Compatibility info
+
+**Qblox**
+
+| quantify-scheduler |                      qblox-instruments                       |                               Cluster firmware                                |
+|--------------------|:------------------------------------------------------------:|:-----------------------------------------------------------------------------:|
+| v0.19.0            | [0.12.0](https://pypi.org/project/qblox-instruments/0.12.0/) | [0.7.0](https://gitlab.com/qblox/releases/cluster_releases/-/releases/v0.7.0) |
+
+## 0.18.2 (2024-04-02)
+
+### Release highlights
+
+**Fixes**
+- Fix control flow compilation in certain edge cases, when operation length is zero. (!928)
+
+**General Updates**
+- Add `ConditionalReset` gate to Qblox gate library. (!788)
+- Allow gates to be device compiled to schedules. (!904)
+- Add guides on generic hardware backend and developing a new hardware backend in quantify (!817)
+- Remove Qblox references in the pulse and acquisition library, and make various modifications in the Qblox backend (!934)
+
+### Breaking changes
+
+- Operations
+  - Move `VoltageOffset` back to the common `pulse_library` (partially revert !863). (!932)
+  - Various changes to durations (!934):
+    - The durations of `ShiftClockPhase` and `SetClockFrequency` are now 0.0, instead of `2 * GRID_TIME`.
+    - The duration of `MarkerPulse` is now equal to the user-specified duration, instead of having an extra `GRID_TIME` duration.
+- InstrumentCoordinator - Rename `QbloxInstrumentCoordinatorComponentBase` to `_ModuleComponentBase`. (!931)
+
+### Merged branches and closed issues
+
+- Operations
+  - Add `ConditionalReset` gate to Qblox gate library. (!788)
+  - Add `H` Hadamard gate to gate library. (!904)
+  - Remove Qblox references in the pulse and acquistion library, and make various modifications in the Qblox backend (!934):
+    - `NumericalSeparatedWeightedIntegration` and `NumericalWeightedIntegration` no longer depend on `SAMPLING_RATE` from the Qblox backend.
+    - `NcoPhaseShiftStrategy`, `NcoSetClockFrequencyStrategy` and `MarkerPulseStrategy` no longer insert `upd_param`. That is now handled by `Sequencer._insert_update_parameters` and `UpdateParameterStrategy`.
+    - A check is performed during compilation (`Sequencer._check_nco_operation_timing`) to ensure enough time is left between successive frequency or phase updates.
+    - `NCO_SET_PH_DELTA_WAIT` constant has been corrected to 4 ns.
+    - A new step during compilation splits `MarkerPulse` operations into a "setting" and "resetting" operation: `Sequencer._replace_marker_pulses()`.
+
+- Compilation
+  - Allow gates to be device compiled to schedules. (!904)
+
+- Documentation
+  - Add guides on generic hardware backend and developing a new hardware backend in quantify (!817)
+  - Fix references to `qblox_instruments` documentation. (!943)
+
+- Schedule
+  - Fix control flow compilation in certain edge cases, when operation length is zero. (!928)
+
+- Qblox backend
+  - Move `_insert_update_parameters` from `QbloxBaseModule` to `Sequencer`. (!912)
+
+- Serialization
+  - Allow `"deserialization_type"` in the serialized dictionary to be the fully qualified name of the object, such that it can be imported via `import_python_object_from_string`. (!905)
+  - Serialization - remove `orjson_dumps` function, that is not used anymore since migrating to `pydantic>=2`. (!941)
+
+- Visualization
+  - Remove automatic conversion of `StitchedPulse` in pulse diagrams, and introduce `combine_waveforms_on_same_port` parameter to `Schedule.plot_pulse_diagram()` to allow for summing overlapping waveforms on the same port. (!935)
+
+- InstrumentCoordinator
+  - Remove `make_qcm_component` and `make_qrm_component` from tests, and allow user-defined module settings in `make_cluster_component`. (!931)
+
+- Tests
+  - small refactor of the `mock_setup_basic_transmon` fixtures. (!918)
+
+- Schedules
+  - Remove trivial name check in `Schedule` instantiation. (!848)
+
+## 0.18.1 (2024-02-22)
+
+### Release highlights
+
+**Fixes**
+- `ThresholdedAcquisition` refactored: the dataset format was changed, `ThresholdedAcquisition` was also made compatible with `ScheduleGettable`. 
+- Instrument Coordinator prepares only the instruments mentioned in the Compiled Schedule
+
+**General Updates**
+- The general merge request template has been made default.
+- The plotting of `VoltageOffset` operations can now be done in both the `"mpl"` and `"plotly"` backends.
+
+**Qblox backend improvements**
+- Validation of io_name in connectivity in QbloxCompilationConfig and addition of get_valid_channels method in the cluster module and pulsar hardware descriptions
+- Removal of pulsars from codebase
+
+### Breaking changes
+
+- Acquisition - Adjust acquisition channel ordering in ScheduleGettable. (!924)
+
+### Merged branches and closed issues
+
+- Acquisition
+  - renamed `AcquisitionOperation` to `Acquisition` (!929)
+  - Fix `ThresholdedAcquisition` dataset format. (!897)
+  - Minor refactor of `ThresholdedAcquisition`: removed `_update_acquisition_info_from_device_config`. (!913)
+
+- Visualization - Allow plotting `VoltageOffset` operations in both the `"mpl"` and `"plotly"` backends. (!873)
+
+- Operations
+  - Make it possible to specify a custom name for `StitchedPulse`. `StitchedPulse` instances created by `long_square_pulse`, `long_ramp_pulse` and `staircase_pulse` now have the same name as the factory function. (!871)
+  - Renamed `NumericalWeightedIntegrationComplex` acquisition protocol to `NumericalSeparatedWeightedIntegration` and created `NumericalWeightedIntegration` acquisition protocol. (!880)
+
+- Qblox backend 
+  - Add io_name validators for connectivity (both graph input list and legacy hardware config) in QbloxCompilationConfig, as well as a get_valid_channels method in the cluster module and pulsar hardware descriptions (!874)
+  - Remove pulsars from codebase. (!893)
+
+- Documentation
+  - Added documentation specifying what a BinMode is (!929)
+  - Added a reference guide on the Acquisition Framework(!929)
+  - Update copyright notice to 2024. (!892)
+  - Update URLs to new QCoDeS location (`qcodes.github.io` to `microsoft.github.io`) (!901)
+  - Improve return docstring for `_get_trigger_count_data` and `_determine_measurement_fixpoint_correction`. (!902)
+  - Pin `scanpydoc<0.12` to prevent incorrect parsing of return types in docstrings. (!903)
+  - Change description of `bin_mode` from options being `BinMode.AVERAGE` and`BinMode.APPEND` to only allow `BinMode.AVERAGE` as option for `bin_mode`. (!930)
+
+- Error handling 
+  - Make the zhinst backend correctly throw a `NotImplementedError` for `SetClockFrequency`. (!910)
+
+- Fixes 
+  - Fetch dependencies in `_get_dependency_versions()` from quantify-scheduler package metadata instead of `pyproject.toml`. Also remove `pkg_resources` because it is deprecated. (!896)
+  - Ensure that only instruments mentioned in the schedule compiled instructions are started by the `start` method of the instrument coordinator (!909).
+  - Add `isinstance` checks to help pyright. (!914)
+  - Fail pytest when using deprecated code from `quantify-scheduler` unintentionally. (!899)
+  - Refactor of the `mock_setup_basic_transmon` fixture. (!917)
+  - Make the zhinst backend correctly throw a `NotImplementedError` for `SetClockFrequency`. (!910)
+  - Add typecheck for references passed to `ref_op` in Schedule. (!907)
+
+- GitLab
+  - Make general Merge Request template the default. (!906)
+  - Add documentation redirect instructions to Release merge request template. (!906)
+
+- Tests
+  - Fail pytest when using deprecated code from `quantify-scheduler` unintentionally. (!899)
+  - Small refactor of the `mock_setup_basic_transmon` fixture. (!917)
+  - Cleaning unused `instrument.close()`. (!919)
+
+- Type checking - Add `isinstance` checks to help pyright. (!914)
+- Change `X` and `Z` gates to have a positive amplitude at 180 degrees by mapping the rotation angle to the range `]-180,180]` instead of `[-180,180[`. (!915)
+
+
+
+## 0.18.0 (2023-12-22)
+
+### Release highlights
+
+**General updates**
+- Add device elements and edges to quantum devices without keeping an explicit reference to them, e.g. do `quantum_device.add_element(BasicTransmonElement("q0"))`.
+- `DeviceCompilationConfig` updated: `backend` key was removed.
+
+**Qblox backend improvements**
+- New features
+  - Square pulses now support complex value pulses, via complex valued amplitude.
+- Fixes
+  - Marker pulse functionality corrected on RF modules (baseband not affected).
+  - `ScheduleGettable` option `always_initialize=False` fixed, speeding up repeated execution by skipping compilation and initializing instruments.
 
 ### Breaking changes
 
@@ -21,32 +287,56 @@
   - The `backend` field in the `HardwareCompilationConfig` was replaced by the `config_type` field, which contains a (string) reference to the backend-specific `HardwareCompilationConfig` datastructure.
   - The `backend` field was removed from the `DeviceCompilationConfig`.
   - The `compilation_passes` field was moved from the `SerialCompilationConfig` into the `DeviceCompilationConfig` and `HardwareCompilationConfig` datastructures.
+    - Move the default device `compilation_passes` from the `QuantumDevice.generate_device_config()` to the `DeviceCompilationConfig` datastructure to ensure backwards compatibility (!884).
   - Migration:
     - `DeviceCompilationConfig`: If you are loading a stored `DeviceCompilationConfig` (instead of relying on the device config generation of the `QuantumDevice`), remove the `"backend"` key.
     - `HardwareCompilationConfig`: If you are already using the new-style `HardwareCompilationConfig`, change the `"backend"` key to `"config_type"`.
       - For Qblox: `"config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig"`,
       - For Zurich Instruments: `"config_type": "quantify_scheduler.backends.zhinst_backend.ZIHardwareCompilationConfig"`.
 
-- Schedulables 
-  - Rename `Schedulable["operation_repr"]` to `Schedulable["operation_id"]` (!775, #438)
-
-- Qblox ICCs 
-  - Fix to allow running `ScheduleGettable` with option `always_initialize=False`. (!868)
-    - Arming the sequencers is now done via `InstrumentCoordinator.start()` instead of `InstrumentCoordinator.prepare()`.
+- Operations 
+  - Modify the parameters of the `VoltageOffset` operation (!863):
+    - Deprecate the `duration` parameter. The duration of a `VoltageOffset` is always 0. Using the `duration` parameter results in a `FutureWarning`.
+    - Make the `port` parameter non-optional, and the `clock` parameter by default `BasebandClockResource.IDENTITY`.
+      - Note: This changes the order of the arguments, please check `VoltageOffset` for the new signature. 
+  - `VoltageOffset` and `StitchedPulse` code moved to Qblox backend (!863):
+     - `VoltageOffset` from `quantify_scheduler.operations.pulse_library` to `quantify_scheduler.backends.qblox.operations.pulse_library`.
+     - `quantify_scheduler.operations.stitched_pulse` to `quantify_scheduler.backends.qblox.operations.stitched_pulse`.
+     - `staircase_pulse`, `long_square_pulse` and `long_ramp_pulse` from `quantify_scheduler.operations.pulse_factories` to `quantify_scheduler.backends.qblox.operations.pulse_factories`.
 
 - Pulses 
   - The phase argument for `SquarePulse` has been removed. (!867)
 
-- Operations 
-  - Modify the parameters of the `VoltageOffset` operation (please also note below that this operation is moved). (!863)
-  - Deprecate the `duration` parameter. The duration of a `VoltageOffset` is always 0. (!863)
-  - Make the `port` parameter non-optional, and the `clock` parameter by default `BasebandClockResource.IDENTITY`. (!863)
-  - N.B., this changes the order of the arguments. The correct signature is now `VoltageOffset(offset_path_0, offset_path_1, port, clock=BasebandClockResource. IDENTITY, t0=0, reference_magnitude=None)`. Using the `duration` parameter results in a `FutureWarning`. (!863)
-  - Move `VoltageOffset` from `quantify_scheduler.operations.pulse_library` to `quantify_scheduler.backends.qblox.operations.pulse_library`. (!863)
-  - Move `quantify_scheduler.operations.stitched_pulse` to `quantify_scheduler.backends.qblox.operations.stitched_pulse`. (!863)
-  - Move `staircase_pulse`, `long_square_pulse` and `long_ramp_pulse` from `quantify_scheduler.operations.pulse_factories` to `quantify_scheduler.backends.qblox.operations.pulse_factories`. (!863)
+- Qblox backend 
+  - Fix missing signal on O2 and O4 outputs of baseband modules in real mode (reverting !803). (!891)
+  - Fix to allow running `ScheduleGettable` with option `always_initialize=False`. (!868)
+    - Arming the sequencers is now done via `InstrumentCoordinator.start()` instead of `InstrumentCoordinator.prepare()`.
+
+- Schedulables 
+  - Rename `Schedulable["operation_repr"]` to `Schedulable["operation_id"]` (!775, #438)
 
 ### Merged branches and closed issues
+
+- Compilation
+  - Implement `Connectivity` datastructure for specifying connections between ports on the quantum device and on the control hardware in the `HardwareCompilationConfig`. (!734)
+  - Allow additional third-party instruments with custom compilation nodes in hardware backends. (!837)
+  - Allow specifying one-to-many, many-to-one, and many-to-many connections in the `Connectivity`. (!841)
+  - Improve errors and warnings when compiling subschedules and/or loops. (!847)
+  - Add helper functions and validators to convert old-style hardware config dicts to new-style `HardwareCompilationConfig` datastructures. (!843)
+  - Allow `MarkerPulse`s to be appended to other operations. (!867)
+
+- Documentation 
+  - Move all `__init__` docstrings to class description and minor docstring changes. (!785)
+  - Add a warning banner to documentation when on an old or on a development version of quantify. (!864)
+  - Improve formatting by replacing single backticks with double backticks where needed. (!866)
+
+- Infrastructure
+  - Add ability to run profiling via the CI pipeline and manually in a notebook. (!854)
+  - Add new test notebook for performance tests. (!862)
+
+- Operations 
+  - Make `staircase_pulse`, `long_square_pulse` and `long_ramp_pulse` compatible with use in control flow on Qblox hardware. These now end on a pulse with 0 voltage offset, to remove 4ns timing mismatch when they are used in control flow. (!857)
+  - Add `acq_channel` argument to `Measure` operation and make `acq_channel` device element accept hashable types. (!869)
 
 - Qblox backend
   - Refactors (!759, !870)
@@ -58,40 +348,19 @@
       - `connected_outputs` => `connected_output_indices`,
       - `connected_inputs` => `connected_input_indices`.
     - Substitute `io_mode` string literals by `ChannelMode` enums.
-    - Remove "imag" sequencer mode from Qblox backend, rename `io_name` to `channel_name` and `path0`/`path1` to `path_I`/`path_Q`. (!870)
+    - Remove `"imag"` sequencer mode from Qblox backend, rename `io_name` to `channel_name` and `path0`/`path1` to `path_I`/`path_Q`. (!870)
   - Bugfixes
     - Fix `MarkerPulse` playback on QRM-RF and QCM-RF. (!828)
       - Marker bit index values for addressing outputs need to be swapped on QCM-RF, not QRM-RF (done via `MarkerPulseStrategy._fix_marker_bit_output_addressing_qcm_rf`).
     - Fix for waveform gain/offset instructions and optimization with waveform uploading. (!860)
     - Fix (temporary) for reshaping of acquisition data of looped measurements in `BinMode.APPEND`. (!850)
-  
-- Compilation
-  - Implement `Connectivity` datastructure for specifying connections between ports on the quantum device and on the control hardware in the `HardwareCompilationConfig`. (!734)
-  - Allow additional third-party instruments with custom compilation nodes in hardware backends. (!837)
-  - Allow specifying one-to-many, many-to-one, and many-to-many connections in the `Connectivity`. (!841)
-  - Improve errors and warnings when compiling subschedules and/or loops. (!847)
-  - Add helper functions and validators to convert old-style hardware config dicts to new-style `HardwareCompilationConfig` datastructures. (!843)
-  - Allow `MarkerPulse`s to be appended to other operations. (!867)
-
-- Schedules 
-  - Prevent `FutureWarning` when creating `Schedule.timing_table` and sort by `abs_time`. (!852) 
-  - Fix missing resources in nested schedule. (!877)
 
 - QuantumDevice
   - Store element and edge instrument references in `QuantumDevice`. (!855, #442)
 
-- Infrastructure
-  - Add ability to run profiling via the CI pipeline and manually in a notebook. (!854)
-  - Add new test notebook for performance tests. (!862)
-
-- Operations 
-  - Make `staircase_pulse`, `long_square_pulse` and `long_ramp_pulse` compatible with use in control flow on Qblox hardware. These now end on a pulse with 0 voltage offset, to remove 4ns timing mismatch when they are used in control flow. (!857)
-  - Add `acq_channel` argument to `Measure` operation and make `acq_channel` device element accept hashable types. (!869)
-
-- Documentation 
-  - Move all `__init__` docstrings to class description and minor docstring changes. (!785)
-  - Add a warning banner to documentation when on an old or on a development version of quantify. (!864)
-  - Improve formatting by replacing single backticks with double backticks where needed. (!866)
+- Schedules 
+  - Prevent `FutureWarning` when creating `Schedule.timing_table` and sort by `abs_time`. (!852) 
+  - Fix missing resources in nested schedule. (!877)
 
 ### Compatibility info
 
@@ -380,7 +649,7 @@
   - **Introducing** `ReferenceMagnitude`. A new parameter called has been introduced for pulses, enabling the flexible specification of amplitudes and powers across various orders of magnitude. This parameter allows users to utilize variable attenuations, among other techniques, to precisely control the amplitudes and powers of the pulses. **Important note** this parameter is not yet implemented for any of the available backends. Future updates are expected to include support for ReferenceMagnitude in the compilation backends.
 
 - Qblox backend improvements
-  - **Introducing the** `MarkerPulse`. This feature simplifies the specification of digital pulses with precise timing, facilitating the control of third-party electronics. For more information, see [Digital I/O](https://quantify-os.org/docs/quantify-scheduler/reference/qblox/Cluster.html#digital-i-o).
+  - **Introducing the** `MarkerPulse`. This feature simplifies the specification of digital pulses with precise timing, facilitating the control of third-party electronics. For more information, see [Digital I/O](https://quantify-os.org/docs/quantify-scheduler/reference/qblox/Cluster.html#digital-channel).
   - **Improved Compilation Time**. The compilation time has been significantly improved, achieving approximately 10 times faster execution. Notably, a 32 times speedup has been observed when running 2-qubit Chevron schedules.
   - **Reduced Acquisition Time**. The minimum time between acquisitions has been lowered from 1000 ns to 300 ns, enhancing the efficiency of data acquisition.
 
@@ -783,7 +1052,7 @@ For help in migrating from deprecated methods, see [Quantify Deprecated Code Sug
 - Infrastructure - Adds rich package in the requirements since tutorials use it. (!276)
 - Operations - The `locate` function now uses the `functools.lru_cache` to cache the result (only for python >= 3.8). For python 3.7, behaviour remains the same.  (!273, !275)
 - Operations - Resolved a minor issue where identical Rxy rotations (for angles >360) would be treated as separate operations in a schedule (!263)
-- Visualization - Adds a function `plot_acquisition_operations` which together with the new `AcquisitionOperation` class will help highlight acquisition pulses in the pulse diagrams. (!271, !277)
+- Visualization - Adds a function `plot_acquisition_operations` which together with the new `Acquisition` class will help highlight acquisition pulses in the pulse diagrams. (!271, !277)
 - Zhinst backend - Large parts of the Zhinst backend have been rewritten. This should resolve a range of issues. (!263)
     - Calculation of the timelines for different operations now makes using of a timing table, improving code readability and debugability.
     - Timing issues related to triggering should be resolved (#218)

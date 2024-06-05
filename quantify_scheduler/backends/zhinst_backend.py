@@ -1,8 +1,12 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
 """Backend for Zurich Instruments."""
-# pylint: disable=too-many-lines
+
 from __future__ import annotations
+
+from quantify_scheduler.compatibility_check import check_zhinst_compatibility
+
+check_zhinst_compatibility()
 
 import logging
 import re
@@ -29,7 +33,7 @@ from .zhinst.waveform import Waveform
 
 from quantify_scheduler import enums
 from quantify_scheduler.backends.corrections import (
-    apply_distortion_corrections,
+    apply_software_distortion_corrections,
     determine_relative_latency_corrections,
 )
 from quantify_scheduler.backends.graph_compilation import (
@@ -51,6 +55,7 @@ from quantify_scheduler.instrument_coordinator.components.generic import (
     DEFAULT_NAME as GENERIC_ICC_DEFAULT_NAME,
 )
 from quantify_scheduler.operations.control_flow_library import Loop
+from quantify_scheduler.operations.pulse_library import SetClockFrequency
 from quantify_scheduler.schedules.schedule import CompiledSchedule, Schedule
 
 if TYPE_CHECKING:
@@ -322,12 +327,9 @@ def _determine_measurement_fixpoint_correction(
 
     Returns
     -------
-    :
-        The time correction to be applied in seconds
-    :
-        The correction in number of samples.
-
-
+    Tuple[float, int]
+        The time correction to be applied in seconds.
+        The correction in the number of samples.
     """
     uhf_sampling_rate = 1.8e9
     samples_per_clock_cycle = 8
@@ -548,7 +550,7 @@ def _validate_schedule(schedule: Schedule) -> None:
         for pulse_data in op.data["pulse_info"]:
             if pulse_data.get("reference_magnitude", None) is not None:
                 raise NotImplementedError
-        if isinstance(op, Loop):
+        if isinstance(op, (Loop, SetClockFrequency)):
             raise NotImplementedError(
                 f"Operation '{op}' is not supported by the zhinst backend."
             )
@@ -709,7 +711,7 @@ class ZIDeviceConfig:
     """
 
 
-def generate_hardware_config(  # noqa: PLR0912, PLR0915
+def _generate_legacy_hardware_config(  # noqa: PLR0912, PLR0915
     schedule: Schedule,
     compilation_config: CompilationConfig,
 ) -> dict:
@@ -758,12 +760,12 @@ def generate_hardware_config(  # noqa: PLR0912, PLR0915
             )
         return connectivity
 
-    port_clocks = _extract_port_clocks_used(schedule=schedule)
+    port_clocks = _extract_port_clocks_used(operation=schedule)
 
     hardware_config: dict = {"devices": [], "local_oscillators": []}
-    hardware_config[
-        "backend"
-    ] = "quantify_scheduler.backends.zhinst_backend.compile_backend"
+    hardware_config["backend"] = (
+        "quantify_scheduler.backends.zhinst_backend.compile_backend"
+    )
 
     # Add connectivity information to the hardware config:
     connectivity_graph = (
@@ -1206,9 +1208,9 @@ def _generate_new_style_hardware_compilation_config(  # noqa: PLR0912, PLR0915
                         connectivity["graph"].append((port_name, port))
                         # Hardware Options
                         if ch_cfg.get("mixer_corrections"):
-                            hardware_options["mixer_corrections"][
-                                f"{port}-{clock}"
-                            ] = ch_cfg["mixer_corrections"]
+                            hardware_options["mixer_corrections"][f"{port}-{clock}"] = (
+                                ch_cfg["mixer_corrections"]
+                            )
                         if ch_cfg.get("gain1"):
                             hardware_options["output_gain"][f"{port}-{clock}"][
                                 "gain_I"
@@ -1263,7 +1265,7 @@ def _get_operations_by_repr(schedule: Schedule) -> dict[str, Operation]:
     return operations_dict_with_repr_keys
 
 
-def compile_backend(
+def compile_backend(  # noqa: PLR0912
     schedule: Schedule,
     config: CompilationConfig | dict[str, Any] | None = None,
     # config can be Dict to support (deprecated) calling with hardware config
@@ -1316,7 +1318,7 @@ def compile_backend(
         )
     if isinstance(config, CompilationConfig):
         # Extract the hardware config from the CompilationConfig
-        hardware_cfg = generate_hardware_config(
+        hardware_cfg = _generate_legacy_hardware_config(
             schedule=schedule, compilation_config=config
         )
     elif config is not None:
@@ -1331,7 +1333,14 @@ def compile_backend(
         # (see also https://gitlab.com/groups/quantify-os/-/epics/1)
         common.HardwareOptions(latency_corrections=hardware_cfg["latency_corrections"])
 
-    schedule = apply_distortion_corrections(schedule, hardware_cfg)
+    if (
+        distortion_corrections := hardware_cfg.get("distortion_corrections")
+    ) is not None:
+        replacing_schedule = apply_software_distortion_corrections(
+            schedule, distortion_corrections
+        )
+        if replacing_schedule is not None:
+            schedule = replacing_schedule
 
     ################################################
     # Timing table manipulation

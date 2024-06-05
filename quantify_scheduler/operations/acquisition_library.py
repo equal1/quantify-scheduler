@@ -1,30 +1,42 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
-# pylint: disable=too-many-arguments
+
 """Standard acquisition protocols for use with the quantify_scheduler."""
 
-from typing import Any, Dict, List, Optional, Sequence, Union
 import warnings
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
-import quantify_scheduler.backends.qblox.constants as qblox_constants
+from quantify_core.utilities import deprecated
 from quantify_scheduler import Operation
 from quantify_scheduler.enums import BinMode
 
 
-class AcquisitionOperation(Operation):  # pylint: disable=too-many-ancestors
+class Acquisition(Operation):
     """
-    Acquisition operations for highlighting in pulse diagrams.
+    An operation representing data acquisition at the quantum-device abstraction layer.
 
-    This class is used to help differentiate an acquisition operation from the regular
+    An Acquisition must consist of (at least) an AcquisitionProtocol specifying how the
+    acquired signal is to be processed, and an AcquisitionChannel and AcquisitionIndex
+    specifying where the acquired data is to be stored in the RawDataset.
+
+
+    N.B. This class helps differentiate an acquisition operation from the regular
     operations. This enables us to use
     :func:`~.quantify_scheduler.schedules._visualization.pulse_diagram.plot_acquisition_operations`
     to highlight acquisition pulses in the pulse diagrams.
     """
 
 
-class Trace(AcquisitionOperation):  # pylint: disable=too-many-ancestors
+@deprecated("1.0", Acquisition)
+class AcquisitionOperation(Acquisition):
+    """Deprecated alias."""
+
+    pass
+
+
+class Trace(Acquisition):
     """
     The Trace acquisition protocol measures a signal s(t).
 
@@ -53,9 +65,9 @@ class Trace(AcquisitionOperation):  # pylint: disable=too-many-ancestors
         to the setpoints of a schedule (e.g., tau in a T1 experiment).
     bin_mode
         Describes what is done when data is written to a register that already
-        contains a value. Options are "append" which appends the result to the
-        list or "average" which stores the weighted average value of the
-        new result and the old register value, by default BinMode.APPEND.
+        contains a value. Only "BinMode.AVERAGE" option is available at the moment;
+        this option stores the weighted average value of the new result and the old
+        register value.
     t0
         The acquisition start time in seconds, by default 0.
     """
@@ -97,30 +109,28 @@ class Trace(AcquisitionOperation):  # pylint: disable=too-many-ancestors
         return self._get_signature(acq_info)
 
 
-class WeightedIntegratedComplex(
-    AcquisitionOperation
-):  # pylint: disable=too-many-ancestors
+class WeightedIntegratedSeparated(Acquisition):
     r"""
-    Weighted integration acquisition protocol on a complex signal.
+    Weighted integration acquisition protocol where two sets weights
+    are applied separately to the real and imaginary parts
+    of the signal.
 
     Weights are applied as:
 
     .. math::
 
-        \widetilde{A} = \int ( \mathrm{Re}(S(t))\cdot \mathrm{Re}(W_A(t)) +
-        \mathrm{Im}(S(t))\cdot \mathrm{Im}(W_A(t)) ) \mathrm{d}t
+        \widetilde{A} = \int \mathrm{Re}(S(t))\cdot W_A(t) \mathrm{d}t
 
     .. math::
 
-        \widetilde{B} = \int ( \mathrm{Re}(S(t))\cdot \mathrm{Re}(W_B(t)) +
-        \mathrm{Im}(S(t))\cdot \mathrm{Im}(W_B(t)) ) \mathrm{d}t
+        \widetilde{B} = \int \mathrm{Im}(S(t))\cdot W_B(t) \mathrm{d}t
 
     Parameters
     ----------
     waveform_a
-        The complex waveform used as integration weights :math:`A(t)`.
+        The complex waveform used as integration weights :math:`W_A(t)`.
     waveform_b
-        The complex waveform used as integration weights :math:`B(t)`.
+        The complex waveform used as integration weights :math:`W_B(t)`.
     port
         The acquisition port.
     clock
@@ -179,7 +189,7 @@ class WeightedIntegratedComplex(
                 "acq_channel": acq_channel,
                 "acq_index": acq_index,
                 "bin_mode": bin_mode,
-                "protocol": "WeightedIntegratedComplex",
+                "protocol": "WeightedIntegratedSeparated",
                 "acq_return_type": complex,
             }
         ]
@@ -187,14 +197,14 @@ class WeightedIntegratedComplex(
         # certain fields are required in the acquisition data
         if "acq_return_type" not in self.data["acquisition_info"][0]:
             self.data["acquisition_info"][0]["acq_return_type"] = complex
-            self.data["acquisition_info"][0]["protocol"] = "WeightedIntegratedComplex"
+            self.data["acquisition_info"][0]["protocol"] = "WeightedIntegratedSeparated"
 
     def __str__(self) -> str:
         acq_info = self.data["acquisition_info"][0]
         return self._get_signature(acq_info)
 
 
-class SSBIntegrationComplex(AcquisitionOperation):  # pylint: disable=too-many-ancestors
+class SSBIntegrationComplex(Acquisition):
     """
     Single sideband integration acquisition protocol with complex results.
 
@@ -291,7 +301,7 @@ class SSBIntegrationComplex(AcquisitionOperation):  # pylint: disable=too-many-a
         return self._get_signature(acq_info)
 
 
-class ThresholdedAcquisition(AcquisitionOperation):
+class ThresholdedAcquisition(Acquisition):
     """
     Acquisition protocol allowing to control rotation and threshold.
 
@@ -356,6 +366,10 @@ class ThresholdedAcquisition(AcquisitionOperation):
         result to the list or "average" which stores the weighted average
         value of the new result and the old register value, by default
         BinMode.AVERAGE.
+    feedback_trigger_label : str
+        The label corresponding to the feedback trigger, which is mapped by the
+        compiler to a feedback trigger address on hardware, by default None.
+
     phase : float
         The phase of the pulse and acquisition in degrees, by default 0.
     t0 : float
@@ -370,8 +384,11 @@ class ThresholdedAcquisition(AcquisitionOperation):
         acq_channel: int = 0,
         acq_index: int = 0,
         bin_mode: Union[BinMode, str] = BinMode.AVERAGE,
+        feedback_trigger_label: Optional[str] = None,
         phase: float = 0,
         t0: float = 0,
+        acq_rotation: float = 0,
+        acq_threshold: float = 0,
     ) -> None:
         waveform_i = {
             "port": port,
@@ -406,12 +423,11 @@ class ThresholdedAcquisition(AcquisitionOperation):
                 "acq_channel": acq_channel,
                 "acq_index": acq_index,
                 "bin_mode": bin_mode,
-                "acq_return_type": int,
+                "acq_return_type": np.uint32,
                 "protocol": "ThresholdedAcquisition",
-                # The following are set during _compile_circuit_to_device
-                "acq_threshold": None,
-                "acq_rotation": None,
-                "integration_length": None,
+                "feedback_trigger_label": feedback_trigger_label,
+                "acq_threshold": acq_threshold,
+                "acq_rotation": acq_rotation,
             },
         ]
         self._update()
@@ -421,26 +437,22 @@ class ThresholdedAcquisition(AcquisitionOperation):
         return self._get_signature(acq_info)
 
 
-class NumericalWeightedIntegrationComplex(
-    WeightedIntegratedComplex
-):  # pylint: disable=too-many-ancestors
+class NumericalSeparatedWeightedIntegration(WeightedIntegratedSeparated):
     r"""
-    Subclass of WeightedIntegratedComplex with parameterized waveforms as weights.
+    Subclass of :class:`~WeightedIntegratedSeparated` with parameterized waveforms as weights.
 
-    A WeightedIntegratedComplex class using parameterized waveforms and
+    A WeightedIntegratedSeparated class using parameterized waveforms and
     interpolation as the integration weights.
 
     Weights are applied as:
 
     .. math::
 
-        \widetilde{A} = \int ( \mathrm{Re}(S(t))\cdot \mathrm{Re}(W_A(t)) +
-        \mathrm{Im}(S(t))\cdot \mathrm{Im}(W_A(t)) ) \mathrm{d}t
+        \widetilde{A} = \int \mathrm{Re}(S(t)\cdot W_A(t) \mathrm{d}t
 
     .. math::
 
-        \widetilde{B} = \int ( \mathrm{Re}(S(t))\cdot \mathrm{Re}(W_B(t)) +
-        \mathrm{Im}(S(t))\cdot \mathrm{Im}(W_B(t)) ) \mathrm{d}t
+        \widetilde{B} = \int \mathrm{Im}(S(t))\cdot W_B(t) \mathrm{d}t
 
     Parameters
     ----------
@@ -456,9 +468,147 @@ class NumericalWeightedIntegrationComplex(
         the incoming complex signal.
     weights_sampling_rate
         The rate with which the weights have been sampled, in Hz. By default equal
-        to the Qblox backend sampling rate. Note that during hardware compilation,
-        the weights will be resampled with the sampling rate supported by the target
-        hardware.
+        to 1 GHz. Note that during hardware compilation, the weights will be resampled
+        with the sampling rate supported by the target hardware.
+    interpolation
+        The type of interpolation to use, by default "linear". This argument is
+        passed to :obj:`~scipy.interpolate.interp1d`.
+    acq_channel
+        The data channel in which the acquisition is stored, by default 0.
+        Describes the "where" information of the  measurement, which typically
+        corresponds to a qubit idx.
+    acq_index
+        The data register in which the acquisition is stored, by default 0.
+        Describes the "when" information of the measurement, used to label or
+        tag individual measurements in a large circuit. Typically corresponds
+        to the setpoints of a schedule (e.g., tau in a T1 experiment).
+    bin_mode
+        Describes what is done when data is written to a register that already
+        contains a value. Options are "append" which appends the result to the
+        list or "average" which stores the weighted average value of the
+        new result and the old register value, by default BinMode.APPEND.
+    phase
+        The phase of the pulse and acquisition in degrees, by default 0.
+    t0
+        The acquisition start time in seconds, by default 0.
+    """
+
+    def __init__(
+        self,
+        port: str,
+        clock: str,
+        weights_a: Union[List[complex], np.ndarray],
+        weights_b: Union[List[complex], np.ndarray],
+        weights_sampling_rate: float = 1e9,
+        interpolation: str = "linear",
+        acq_channel: int = 0,
+        acq_index: int = 0,
+        bin_mode: Union[BinMode, str] = BinMode.APPEND,
+        phase: float = 0,
+        t0: float = 0,
+    ) -> None:
+        t_samples = np.arange(len(weights_a)) / weights_sampling_rate
+
+        weights_a = np.array(weights_a)
+        weights_b = np.array(weights_b)
+
+        waveforms_a = {
+            "wf_func": "quantify_scheduler.waveforms.interpolated_complex_waveform",
+            "samples": weights_a,
+            "t_samples": t_samples,
+            "interpolation": interpolation,
+        }
+        waveforms_b = {
+            "wf_func": "quantify_scheduler.waveforms.interpolated_complex_waveform",
+            "samples": weights_b,
+            "t_samples": t_samples,
+            "interpolation": interpolation,
+        }
+        duration = len(t_samples) / weights_sampling_rate
+
+        super().__init__(
+            waveform_a=waveforms_a,
+            waveform_b=waveforms_b,
+            port=port,
+            clock=clock,
+            duration=duration,
+            acq_channel=acq_channel,
+            acq_index=acq_index,
+            bin_mode=bin_mode,
+            phase=phase,
+            t0=t0,
+        )
+        self.data["name"] = self.__class__.__name__
+        self.data["acquisition_info"][0][
+            "protocol"
+        ] = "NumericalSeparatedWeightedIntegration"
+        self._update()
+
+    def __str__(self) -> str:
+        acq_info = self.data["acquisition_info"][0]
+        weights_a = np.array2string(
+            acq_info["waveforms"][0]["samples"], separator=", ", precision=9
+        )
+        weights_b = np.array2string(
+            acq_info["waveforms"][1]["samples"], separator=", ", precision=9
+        )
+        t_samples = acq_info["waveforms"][0]["t_samples"]
+        weights_sampling_rate = 1 / (t_samples[1] - t_samples[0])
+        port = acq_info["port"]
+        clock = acq_info["clock"]
+        interpolation = acq_info["waveforms"][0]["interpolation"]
+        acq_channel = acq_info["acq_channel"]
+        acq_index = acq_info["acq_index"]
+        bin_mode = acq_info["bin_mode"].value
+        phase = acq_info["phase"]
+        t0 = acq_info["t0"]
+
+        return (
+            f"{self.__class__.__name__}(weights_a={weights_a}, weights_b={weights_b}, "
+            f"{weights_sampling_rate=}, {port=}, {clock=}, {interpolation=}, "
+            f"{acq_channel=}, {acq_index=}, {bin_mode=}, {phase=}, {t0=})"
+        )
+
+    def __repr__(self) -> str:
+        return str(self)
+
+
+class NumericalWeightedIntegrationComplex(WeightedIntegratedSeparated):
+    """Deprecated, renamed to :class:`~NumericalSeparatedWeightedIntegration`."""
+
+    def __new__(cls, *args, **kwargs) -> NumericalSeparatedWeightedIntegration:
+        """Return :class:`~NumericalSeparatedWeightedIntegration`."""
+        warnings.warn(
+            (
+                f"{NumericalWeightedIntegrationComplex.__name__} is "
+                f"deprecated and will be removed in quantify-scheduler>=0.20.0. Use "
+                f"{NumericalSeparatedWeightedIntegration.__name__} instead."
+            ),
+            FutureWarning,
+        )
+        return NumericalSeparatedWeightedIntegration(*args, **kwargs)
+
+
+class NumericalWeightedIntegration(NumericalSeparatedWeightedIntegration):
+    """
+    Subclass of :class:`~NumericalSeparatedWeightedIntegration` returning a complex number.
+
+    Parameters
+    ----------
+    port
+        The acquisition port.
+    clock
+        The clock used to demodulate the acquisition.
+    weights_a
+        The list of complex values used as weights :math:`A(t)` on
+        the incoming complex signal.
+    weights_b
+        The list of complex values used as weights :math:`B(t)` on
+        the incoming complex signal.
+    weights_sampling_rate
+        The rate with which the weights have been sampled, in Hz. By default equal
+        to 1 GHz. Note that during hardware compilation, the weights will be resampled
+        with the sampling rate supported by the target hardware.
     t
         The time values of each weight. This parameter is deprecated in favor of
         ``weights_sampling_rate``. If a value is provided for ``t``, the
@@ -492,8 +642,7 @@ class NumericalWeightedIntegrationComplex(
         clock: str,
         weights_a: Union[List[complex], np.ndarray],
         weights_b: Union[List[complex], np.ndarray],
-        weights_sampling_rate: float = qblox_constants.SAMPLING_RATE,
-        t: Optional[Union[List[float], np.ndarray]] = None,
+        weights_sampling_rate: float = 1e9,
         interpolation: str = "linear",
         acq_channel: int = 0,
         acq_index: int = 0,
@@ -501,117 +650,24 @@ class NumericalWeightedIntegrationComplex(
         phase: float = 0,
         t0: float = 0,
     ) -> None:
-        if t is not None:
-            warnings.warn(
-                "Support for the 't' argument will be dropped in quantify-scheduler >= "
-                "0.17.0. Please use 'weights_sampling_rate' instead.",
-                FutureWarning,
-            )
-            if not _is_increasing_at_constant_rate(t):
-                raise ValueError(
-                    "The NumericalWeightedIntegrationComplex protocol requires that "
-                    "the 't' argument has a length larger than 1 and increases at a "
-                    "constant rate"
-                )
-            t_samples = np.array(t)
-            weights_sampling_rate = 1 / (t_samples[1] - t_samples[0])
-        else:
-            t_samples = np.arange(len(weights_a)) / weights_sampling_rate
-
-        weights_a = np.array(weights_a)
-        weights_b = np.array(weights_b)
-
-        waveforms_a = {
-            "wf_func": "quantify_scheduler.waveforms.interpolated_complex_waveform",
-            "samples": weights_a,
-            "t_samples": t_samples,
-            "interpolation": interpolation,
-        }
-        waveforms_b = {
-            "wf_func": "quantify_scheduler.waveforms.interpolated_complex_waveform",
-            "samples": weights_b,
-            "t_samples": t_samples,
-            "interpolation": interpolation,
-        }
-        duration = len(t_samples) / weights_sampling_rate
-
         super().__init__(
-            waveform_a=waveforms_a,
-            waveform_b=waveforms_b,
             port=port,
             clock=clock,
-            duration=duration,
+            weights_a=weights_a,
+            weights_b=weights_b,
+            weights_sampling_rate=weights_sampling_rate,
+            interpolation=interpolation,
             acq_channel=acq_channel,
             acq_index=acq_index,
             bin_mode=bin_mode,
             phase=phase,
             t0=t0,
         )
-        self.data["name"] = self.__class__.__name__
+        self.data["acquisition_info"][0]["protocol"] = "NumericalWeightedIntegration"
         self._update()
 
-    def __str__(self) -> str:
-        acq_info = self.data["acquisition_info"][0]
-        weights_a = np.array2string(
-            acq_info["waveforms"][0]["samples"], separator=", ", precision=9
-        )
-        weights_b = np.array2string(
-            acq_info["waveforms"][1]["samples"], separator=", ", precision=9
-        )
-        t_samples = acq_info["waveforms"][0]["t_samples"]
-        weights_sampling_rate = 1 / (t_samples[1] - t_samples[0])
-        port = acq_info["port"]
-        clock = acq_info["clock"]
-        interpolation = acq_info["waveforms"][0]["interpolation"]
-        acq_channel = acq_info["acq_channel"]
-        acq_index = acq_info["acq_index"]
-        bin_mode = acq_info["bin_mode"].value
-        phase = acq_info["phase"]
-        t0 = acq_info["t0"]
 
-        return (
-            f"{self.__class__.__name__}(weights_a={weights_a}, weights_b={weights_b}, "
-            f"{weights_sampling_rate=}, {port=}, {clock=}, {interpolation=}, "
-            f"{acq_channel=}, {acq_index=}, {bin_mode=}, {phase=}, {t0=})"
-        )
-
-    def __repr__(self) -> str:
-        return str(self)
-
-
-def _is_increasing_at_constant_rate(array: Sequence[float]) -> bool:
-    """
-    Checks whether the array is increasing at a constant rate.
-
-    An array with size 2 is assumed to be increasing at a constant rate.
-
-    .. admonition:: Examples
-
-        .. jupyter-execute::
-            :hide-code:
-
-            from quantify_scheduler.operations.acquisition_library import (
-                _is_increasing_at_constant_rate
-            )
-
-        .. jupyter-execute::
-
-            assert _is_increasing_at_constant_rate([1,2,3,4]) is True
-            assert _is_increasing_at_constant_rate([1,2,4]) is False
-            assert _is_increasing_at_constant_rate([4,3,2,1]) is False
-            assert _is_increasing_at_constant_rate([1,1,1]) is False
-            assert _is_increasing_at_constant_rate([2,1]) is False
-            assert _is_increasing_at_constant_rate([1]) is False
-    """
-    if len(array) < 2:
-        return False
-    diff = np.diff(array)
-    is_constant_rate = np.all(np.isclose(diff, diff[0], atol=1e-10))
-    is_increasing = diff[0] > 0
-    return bool(is_constant_rate and is_increasing)
-
-
-class TriggerCount(AcquisitionOperation):  # pylint: disable=too-many-ancestors
+class TriggerCount(Acquisition):
     """
     Trigger counting acquisition protocol returning an integer.
 

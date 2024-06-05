@@ -1,20 +1,40 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
-# pylint: disable=comparison-with-callable
+
 """QASM program class for Qblox backend."""
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Iterator, List, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Generator,
+    Hashable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Union,
+)
 
 import numpy as np
 from columnar import columnar
 from columnar.exceptions import TableOverflowError
 
 from quantify_scheduler.backends.qblox import constants, helpers, q1asm_instructions
+from quantify_scheduler.backends.qblox.conditional import (
+    ConditionalManager,
+)
 from quantify_scheduler.backends.qblox.register_manager import RegisterManager
 from quantify_scheduler.backends.types.qblox import OpInfo, StaticHardwareProperties
 from quantify_scheduler.schedules.schedule import AcquisitionMetadata
+
+if TYPE_CHECKING:
+    from quantify_scheduler.backends.qblox.operation_handling.base import (
+        IOperationStrategy,
+    )
+    from quantify_scheduler.backends.qblox.operation_handling.virtual import (
+        ConditionalStrategy,
+    )
 
 
 class QASMProgram:
@@ -33,6 +53,9 @@ class QASMProgram:
         The register manager that keeps track of the occupied/available registers.
     align_fields
         If True, make QASM program more human-readable by aligning its fields.
+    acq_metadata
+        Provides a summary of the used acquisition protocol, bin mode, acquisition
+        channels, acquisition indices per channel, and repetitions.
     """
 
     def __init__(
@@ -42,28 +65,35 @@ class QASMProgram:
         align_fields: bool,
         acq_metadata: Optional[AcquisitionMetadata],
     ):
-        self.register_manager: RegisterManager = register_manager
-        """The register manager that keeps track of the occupied/available registers."""
-        self.static_hw_properties: StaticHardwareProperties = static_hw_properties
+        self.static_hw_properties = static_hw_properties
         """Dataclass holding the properties of the hardware that this program is to be
         played on."""
-        self.elapsed_time: int = 0
-        """The time elapsed after finishing the program in its current form. This is
-        used  to keep track of the overall timing and necessary waits."""
-        self.integration_length_acq: Optional[int] = None
-        """Integration length to use for the square acquisition."""
-        self.time_last_acquisition_triggered: Optional[int] = None
-        """Time on which the last acquisition was triggered. Is ``None`` if no previous
-        acquisition was triggered."""
-        self.instructions: List[list] = list()
-        """A list containing the instructions added to the program. The instructions
-        added are in turn a list of the instruction string with arguments."""
-        self.align_fields: bool = align_fields
+        self.register_manager = register_manager
+        """The register manager that keeps track of the occupied/available registers."""
+        self.align_fields = align_fields
         """If true, all labels, instructions, arguments and comments
         in the string representation of the program are printed on the same indention level.
         This worsens performance."""
-        self.acq_metadata: Optional[AcquisitionMetadata] = acq_metadata
-        """Acquisition metadata."""
+        self.acq_metadata = acq_metadata
+        """Provides a summary of the used acquisition protocol, bin mode, acquisition
+        channels, acquisition indices per channel, and repetitions."""
+
+        self.elapsed_time = 0
+        """The time elapsed after finishing the program in its current form. This is
+        used  to keep track of the overall timing and necessary waits."""
+        self.time_last_acquisition_triggered: Optional[int] = None
+        """Time on which the last acquisition was triggered. Is ``None`` if no previous
+        acquisition was triggered."""
+        self.time_last_pulse_triggered: Optional[int] = None
+        """Time on which the last operation was triggered. Is ``None`` if no previous
+        operation was triggered."""
+        self.instructions: List[list] = list()
+        """A list containing the instructions added to the program. The instructions
+        added are in turn a list of the instruction string with arguments."""
+        self.conditional_manager = ConditionalManager()
+        """The conditional manager that keeps track of the conditionals."""
+        self._lock_conditional: bool = False
+        """A lock to prevent nested conditionals."""
 
     def _find_qblox_acq_index(self, acq_channel: Hashable) -> int:
         """
@@ -94,7 +124,8 @@ class QASMProgram:
         Parameters
         ----------
         instruction
-            The instruction to use. This should be one specified in `PulsarInstructions`
+            The instruction to use. This should be one specified in
+            :mod:`~quantify_scheduler.backends.qblox.q1asm_instructions`
             or the assembler will raise an exception.
         args
             Arguments to be passed.
@@ -120,7 +151,7 @@ class QASMProgram:
         comment_str = f"# {comment}" if comment is not None else ""
         return [label_str, instruction, instr_args, comment_str]
 
-    def emit(self, *args, **kwargs) -> None:
+    def emit(self, *args, **kwargs) -> list[str | int]:
         """
         Wrapper around the ``get_instruction_as_list`` which adds it to this program.
 
@@ -130,6 +161,12 @@ class QASMProgram:
             All arguments to pass to `get_instruction_as_list`.
         **kwargs
             All keyword arguments to pass to `get_instruction_as_list`.
+
+        Returns
+        -------
+        :
+            A list containing instructions.
+
         """
         # Translating the acquisition channel to qblox acquisition index is intended as a temporary solution.
         # Proper solution: SE-298.
@@ -143,6 +180,7 @@ class QASMProgram:
             args[1] = self._find_qblox_acq_index(acq_channel=args[1])
 
         self.instructions.append(self.get_instruction_as_list(*args, **kwargs))
+        return self.instructions[-1]
 
     # --- QOL functions -----
 
@@ -169,6 +207,27 @@ class QASMProgram:
             marker_binary,
             comment=f"set markers to {marker_setting}",
         )
+
+    def set_latch(self, op_strategies: Sequence[IOperationStrategy]) -> None:
+        """
+        Set the latch that is needed for conditional playback.
+
+        This assumes that the latch address is present inside the pulses'
+        `operation_info`. If no latch address is found, nothing is emitted.
+
+        Parameters
+        ----------
+        op_strategies
+            The op_strategies containing the pulses to search the latch address in.
+
+        """
+        for op_strategy in op_strategies:
+            op_info = op_strategy.operation_info
+            if not op_info.is_acquisition and (
+                op_info.data.get("feedback_trigger_address") is not None
+            ):
+                self.emit(q1asm_instructions.FEEDBACK_TRIGGER_EN, 1, 4)
+                return
 
     def auto_wait(
         self,
@@ -221,6 +280,7 @@ class QASMProgram:
                         constants.IMMEDIATE_MAX_WAIT_TIME,
                         comment=comment,
                     )
+                    self.conditional_manager.num_real_time_instructions += 1
             else:
                 for _ in range(repetitions):
                     self.emit(
@@ -228,6 +288,7 @@ class QASMProgram:
                         constants.IMMEDIATE_MAX_WAIT_TIME,
                         comment=comment,
                     )
+                    self.conditional_manager.num_real_time_instructions += 1
             time_left = wait_time % constants.IMMEDIATE_MAX_WAIT_TIME
         else:
             time_left = int(wait_time)
@@ -238,6 +299,7 @@ class QASMProgram:
                 time_left,
                 comment=comment,
             )
+            self.conditional_manager.num_real_time_instructions += 1
 
         if count_as_elapsed_time:
             self.elapsed_time += wait_time
@@ -256,16 +318,6 @@ class QASMProgram:
         ValueError
             If wait time < 0.
         """
-        if not helpers.is_multiple_of_grid_time(
-            operation.timing, grid_time_ns=constants.GRID_TIME
-        ):
-            raise ValueError(
-                f"Start time of operation is invalid. Qblox QCM and QRM "
-                f"enforce a grid time of {constants.GRID_TIME} ns. Please "
-                f"make sure all operations start at an interval of "
-                f"{constants.GRID_TIME} ns.\n\nOffending operation:\n"
-                f"{repr(operation)}."
-            )
         start_time = helpers.to_grid_time(operation.timing)
         wait_time = start_time - self.elapsed_time
         if wait_time > 0:
@@ -274,83 +326,9 @@ class QASMProgram:
             raise ValueError(
                 f"Invalid timing. Attempting to wait for {wait_time} "
                 f"ns before {repr(operation)}. Please note that a wait time of at least"
-                f" {constants.GRID_TIME} ns is required between "
+                f" {constants.MIN_TIME_BETWEEN_OPERATIONS} ns is required between "
                 f"operations.\nAre multiple operations being started at the same time?"
             )
-
-    def verify_square_acquisition_duration(self, acquisition: OpInfo, duration: float):
-        """
-        Verifies if the square acquisition is valid by checking constraints on the
-        duration.
-
-        Parameters
-        ----------
-        acquisition:
-            The operation info of the acquisition to process.
-        duration:
-            The duration to verify.
-
-        Raises
-        ------
-        ValueError
-            When attempting to perform an acquisition of a duration that is not a
-            multiple of 4 ns.
-        ValueError
-            When using a different duration than previous acquisitions.
-        """
-        duration_ns = int(np.round(duration * 1e9))
-        if self.integration_length_acq is None:
-            if duration_ns % constants.GRID_TIME != 0:
-                raise ValueError(
-                    f"Attempting to perform square acquisition with a "
-                    f"duration of {duration_ns} ns. Please ensure the "
-                    f"duration is a multiple of {constants.GRID_TIME} "
-                    f"ns.\n\nException caused by {repr(acquisition)}."
-                )
-            self.integration_length_acq = duration_ns
-        elif self.integration_length_acq != duration_ns:
-            raise ValueError(
-                f"Attempting to set an integration_length of {duration_ns} "
-                f"ns, while this was previously determined to be "
-                f"{self.integration_length_acq}. Please "
-                f"check whether all square acquisitions in the schedule "
-                f"have the same duration."
-            )
-
-    def _acquire_looped(self, acquisition: OpInfo, bin_idx: Union[int, str]) -> None:
-        if bin_idx != 0:
-            raise ValueError(
-                "looped acquisition currently only works for acquisition "
-                "index 0 in `BinMode` `AVERAGE`."
-            )
-
-        measurement_idx = acquisition.data["acq_channel"]
-
-        duration = acquisition.data["integration_time"]
-        self.verify_square_acquisition_duration(acquisition, duration)
-
-        duration_ns = helpers.to_grid_time(duration)
-
-        number_of_times = acquisition.data["num_times"]
-        buffer_time = acquisition.data["buffer_time"]
-        with self.loop(
-            label=f"looped_acq{len(self.instructions)}", repetitions=number_of_times
-        ) as loop_register:
-            self.emit(
-                q1asm_instructions.ACQUIRE,
-                measurement_idx,
-                loop_register,
-                duration_ns,
-            )
-            buffer_time_ns = helpers.to_grid_time(buffer_time)
-            if buffer_time > 0:
-                self.emit(q1asm_instructions.WAIT, buffer_time_ns)
-            if buffer_time < 0:
-                raise ValueError(
-                    f"Buffer time cannot be smaller than 0.\n\nException "
-                    f"occurred because of {repr(acquisition)}."
-                )
-        self.elapsed_time += number_of_times * (duration_ns + buffer_time_ns)
 
     def set_gain_from_amplitude(
         self,
@@ -434,7 +412,7 @@ class QASMProgram:
 
     def __str__(self) -> str:
         """
-        Returns a string representation of the program. The pulsar expects the program
+        Returns a string representation of the program. The sequencer expects the program
         to be such a string.
 
         The conversion to str is done using `columnar`, which expects a list of lists,
@@ -464,8 +442,85 @@ class QASMProgram:
             )
 
     @contextmanager
+    def conditional(
+        self, operation: ConditionalStrategy
+    ) -> Generator[None, None, None]:
+        """
+        Defines a conditional block in the QASM program.
+
+        When this context manager is entered/exited it will insert additional
+        ``set_cond`` QASM instructions in the program that specify the
+        conditionality of a set of instructions.
+
+        For example, a conditional X gate would correspond to the QASM program:
+
+        .. code-block::
+
+            set_cond 1, 0, 0, 20
+            play 1, 20
+            set_cond 0, 0, 0, 4
+
+        The exact values that need to be passed to the first ``set_cond``
+        instruction are determined while the qasm program is generated with the
+        help of
+        :class:`~quantify_scheduler.backends.qblox.conditional.FeedbackTriggerCondition`
+        and
+        :class:`~quantify_scheduler.backends.qblox.conditional.ConditionalManager`.
+
+        Parameters
+        ----------
+        operation: ConditionalStrategy
+            The conditional strategy that defines the start of a conditional block.
+
+        """
+        trigger_condition = operation.trigger_condition
+        if self._lock_conditional:
+            raise RuntimeError(
+                "Nested conditional playback inside schedules is not supported by "
+                f"the Qblox backend. This error is caused by the following operation strategy:\n{operation}."
+            )
+        self._lock_conditional = True
+
+        # This instruction will be replaced when the context manager exits the
+        # conditional block.
+        enable_conditional_instructions = self.emit(
+            q1asm_instructions.FEEDBACK_SET_COND,
+            0,
+            0,
+            0,
+            0,
+            comment="start conditional playback",
+        )
+        self.conditional_manager.reset()
+        self.conditional_manager.enable_conditional = enable_conditional_instructions
+        self.conditional_manager.start_time = self.elapsed_time
+
+        yield
+        # When the context manager exits, add a stop conditional playback and
+        # replace the initial FEEDBACK_SET_COND instruction.
+        self.conditional_manager.end_time = self.elapsed_time
+        self.emit(
+            q1asm_instructions.FEEDBACK_SET_COND,
+            0,
+            0,
+            0,
+            0,
+            comment="stop conditional playback",
+        )
+        instruction = self.get_instruction_as_list(
+            q1asm_instructions.FEEDBACK_SET_COND,
+            int(trigger_condition.enable),
+            trigger_condition.mask,
+            trigger_condition.operator.value,
+            self.conditional_manager.wait_per_real_time_instruction,
+            comment="start conditional playback",
+        )
+        self.conditional_manager.replace_enable_conditional(instruction)
+        self.conditional_manager.reset()
+        self._lock_conditional = False
+
+    @contextmanager
     def loop(self, label: str, repetitions: int = 1):
-        # pylint: disable=line-too-long
         """
         Defines a context manager that can be used to generate a loop in the QASM
         program.
@@ -489,15 +544,15 @@ class QASMProgram:
         .. jupyter-execute::
 
             from quantify_scheduler.backends.qblox.qasm_program import QASMProgram
-            from quantify_scheduler.backends.qblox.instrument_compilers import QcmModule
+            from quantify_scheduler.backends.qblox.instrument_compilers import QCMCompiler
             from quantify_scheduler.backends.qblox import register_manager, constants
             from quantify_scheduler.backends.types.qblox import (
-                StaticHardwareProperties,
+                StaticAnalogModuleProperties,
                 BoundedParameter
             )
 
             qasm = QASMProgram(
-                static_hw_properties=QcmModule.static_hw_properties,
+                static_hw_properties=QCMCompiler.static_hw_properties,
                 register_manager=register_manager.RegisterManager(),
                 align_fields=True,
                 acq_metadata=None,

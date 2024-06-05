@@ -1,15 +1,6 @@
-# pylint: disable=missing-function-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-module-docstring
-# pylint: disable=too-many-locals
-# pylint: disable=invalid-name
-# pylint: disable=unused-argument
-
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
-import json
 import os
-import zipfile
 from unittest import TestCase
 from unittest.mock import Mock
 
@@ -19,17 +10,10 @@ from qcodes.instrument.parameter import ManualParameter
 from xarray import DataArray, Dataset
 
 from quantify_scheduler.backends import SerialCompiler
-from quantify_scheduler.device_under_test.quantum_device import QuantumDevice
-from quantify_scheduler.enums import BinMode
 from quantify_scheduler.gettables import ScheduleGettable
 from quantify_scheduler.gettables_profiled import ProfiledScheduleGettable
 from quantify_scheduler.helpers.schedule import (
     extract_acquisition_metadata_from_schedule,
-)
-from quantify_scheduler.schedules.schedule import (
-    AcquisitionChannelMetadata,
-    AcquisitionMetadata,
-    Schedule,
 )
 from quantify_scheduler.schedules.spectroscopy_schedules import (
     heterodyne_spec_sched,
@@ -39,7 +23,6 @@ from quantify_scheduler.schedules.timedomain_schedules import (
     allxy_sched,
     rabi_sched,
     readout_calibration_sched,
-    t1_sched,
 )
 from quantify_scheduler.schedules.trace_schedules import trace_schedule
 
@@ -50,20 +33,18 @@ def test_process_acquired_data(
 ):
     # arrange
     quantum_device = mock_setup_basic_transmon["quantum_device"]
-    acq_metadata = AcquisitionMetadata(
-        acq_protocol="SSBIntegrationComplex",
-        bin_mode=BinMode.AVERAGE,
-        acq_return_type=complex,
-        acq_channels_metadata={
-            i: AcquisitionChannelMetadata(acq_channel=i, acq_indices=[0])
-            for i in range(num_channels)
-        },
-        repetitions=1,
-    )
 
-    mock_results = np.array([4815 + 162342j], dtype=np.complex64)
+    mock_number = 4815 + 162342j
+    mock_results = np.array([mock_number], dtype=np.complex64)
     mock_dataset = Dataset(
-        {i: ([f"acq_index_{i}"], mock_results) for i in range(num_channels)}
+        {
+            i: (
+                [f"acq_index_{i}"],
+                mock_results * i,
+                {"acq_protocol": "SSBIntegrationComplex"},
+            )
+            for i in range(num_channels)
+        }
     )
 
     gettable = ScheduleGettable(
@@ -74,13 +55,22 @@ def test_process_acquired_data(
     )
 
     # act
-    with pytest.warns(FutureWarning, match=".* in quantify-scheduler-0.17."):
-        processed_data = gettable.process_acquired_data(
-            mock_dataset, acq_metadata, repetitions=10
-        )
+    processed_data = gettable.process_acquired_data(mock_dataset)
+
+    def transform_complex(c: complex) -> tuple:
+        if real_imag:
+            return (c.real, c.imag)
+        else:
+            return (abs(c), np.angle(c, deg=True))
+
+    expected_data: tuple = tuple(
+        np.array([transform_complex(mock_number * i)[elem]], dtype=np.float32)
+        for i in range(num_channels)
+        for elem in [0, 1]
+    )
 
     # assert
-    assert len(processed_data) == 2 * num_channels
+    np.testing.assert_array_almost_equal(processed_data, expected_data, decimal=5)
 
 
 def test_schedule_gettable_iterative_heterodyne_spec(mock_setup_basic_transmon, mocker):
@@ -116,6 +106,7 @@ def test_schedule_gettable_iterative_heterodyne_spec(mock_setup_basic_transmon, 
                     f"acq_index_{acq_channel}_yolo"
                 ],  # the name of acquisition channel dimension should not matter
                 data.reshape((len(acq_indices),)),
+                {"acq_protocol": "SSBIntegrationComplex"},
             )
         },
     )
@@ -194,7 +185,13 @@ def test_schedule_gettable_batched_allxy(
     )
     # SSBIntegrationComplex, bin_mode.AVERAGE
     expected_data = Dataset(
-        {acq_channel: ([f"acq_index_{acq_channel}"], data.reshape((len(acq_indices),)))}
+        {
+            acq_channel: (
+                [f"acq_index_{acq_channel}"],
+                data.reshape((len(acq_indices),)),
+                {"acq_protocol": "SSBIntegrationComplex"},
+            ),
+        }
     )
 
     mocker.patch.object(
@@ -274,6 +271,7 @@ def test_schedule_gettable_append_readout_cal(
             acq_channel: (
                 ["a_repetition_index", "an_acq_index"],
                 data.reshape((repetitions, len(acq_indices))),
+                {"acq_protocol": "SSBIntegrationComplex"},
             )
         }
     )
@@ -347,6 +345,7 @@ def test_schedule_gettable_trace_acquisition(
         [exp_trace],
         coords=[[0], range(len(exp_trace))],
         dims=["repetition", "acq_index"],
+        attrs={"acq_protocol": "SSBIntegrationComplex"},
     )
     exp_data = Dataset({0: exp_data_array})
 
@@ -367,69 +366,6 @@ def test_schedule_gettable_trace_acquisition(
     np.testing.assert_array_equal(dset.x0, sample_times)
     np.testing.assert_array_equal(dset.y0, exp_trace.real)
     np.testing.assert_array_equal(dset.y1, exp_trace.imag)
-
-
-@pytest.mark.deprecated
-def test_schedule_gettable_generate_diagnostic(
-    mock_setup_basic_transmon_with_standard_params, mocker
-):
-    schedule_kwargs = {"times": np.linspace(1e-6, 50e-6, 50), "qubit": "q0"}
-    quantum_device = mock_setup_basic_transmon_with_standard_params["quantum_device"]
-
-    # Prepare the mock data the t1 schedule
-    acq_channel = 0
-    data = (np.ones(50) * np.exp(1j * np.deg2rad(45))).astype(np.complex64)
-
-    # SSBIntegrationComplex, BinMode.AVERAGE
-    expected_data = Dataset({acq_channel: (["acq_index"], data)})
-
-    mocker.patch.object(
-        mock_setup_basic_transmon_with_standard_params["instrument_coordinator"],
-        "retrieve_acquisition",
-        return_value=expected_data,
-    )
-
-    # Configure the gettable
-    gettable = ScheduleGettable(
-        quantum_device=quantum_device,
-        schedule_function=t1_sched,
-        schedule_kwargs=schedule_kwargs,
-        real_imag=True,
-        batched=True,
-    )
-    assert gettable.is_initialized is False
-
-    with pytest.raises(RuntimeError):
-        gettable.generate_diagnostics_report()
-
-    with pytest.raises(RuntimeError):
-        gettable.generate_diagnostics_report(update=True)
-
-    filename = gettable.generate_diagnostics_report(execute_get=True)
-
-    assert gettable.is_initialized is True
-
-    with zipfile.ZipFile(filename, mode="r") as zf:
-        _ = QuantumDevice.from_json(zf.read("device_cfg.json").decode())
-        _ = json.loads(zf.read("hardware_cfg.json").decode())
-        get_cfg = json.loads(zf.read("gettable.json").decode())
-        sched = Schedule.from_json(zf.read("schedule.json").decode())
-        snap = json.loads(zf.read("snapshot.json").decode())
-
-    assert (
-        snap["instruments"]["q0"]["submodules"]["reset"]["parameters"]["duration"][
-            "value"
-        ]
-        == 0.0002
-    )
-    assert gettable.quantum_device.cfg_sched_repetitions() == get_cfg["repetitions"]
-
-    compiler = SerialCompiler(name="compiler")
-    compiled_sched = compiler.compile(
-        schedule=sched, config=quantum_device.generate_compilation_config()
-    )
-
-    assert gettable._compiled_schedule == compiled_sched
 
 
 def test_profiling(mock_setup_basic_transmon_with_standard_params, tmp_test_data_dir):
@@ -504,6 +440,7 @@ def test_formatting_trigger_count(mock_setup_basic_nv):
         [[101, 35, 2]],
         coords=[[0], [0, 1, 2]],
         dims=["repetition", "acq_index"],
+        attrs={"acq_protocol": "TriggerCount"},
     )
     acquired_data = Dataset({0: acquired_data_array})
 
@@ -576,7 +513,5 @@ def test_schedule_gettable_no_hardware_cfg_raises(mock_setup_basic_transmon):
     assert (
         f"InstrumentCoordinator.retrieve_acquisition() "
         f"('{mock_setup_basic_transmon['instrument_coordinator'].name}') did not "
-        f"return any data, but was expected to return data based on the acquisition "
-        f"metadata in the compiled schedule: acq_metadata.acq_channels_metadata="
-        in str(exc.value)
+        f"return any data, but was expected to return data." in str(exc.value)
     )

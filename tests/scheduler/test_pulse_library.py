@@ -1,7 +1,3 @@
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-# pylint: disable=eval-used
 import json
 from unittest import TestCase
 
@@ -10,7 +6,6 @@ import pytest
 
 from quantify_scheduler import Operation, Schedule
 from quantify_scheduler.backends import SerialCompiler
-from quantify_scheduler.backends.qblox.operations import VoltageOffset
 from quantify_scheduler.backends.qblox.operations.pulse_factories import (
     long_square_pulse,
 )
@@ -31,6 +26,7 @@ from quantify_scheduler.operations.pulse_library import (
     SquarePulse,
     StaircasePulse,
     SuddenNetZeroPulse,
+    VoltageOffset,
     create_dc_compensation_pulse,
     decompose_long_square_pulse,
 )
@@ -270,13 +266,13 @@ class TestPulseLevelOperation:
 
     def test_duration(self, operation: Operation) -> None:
         pulse_info = operation.data["pulse_info"][0]
-        if (
-            operation.__class__ is ResetClockPhase
-            or operation.__class__ is VoltageOffset
-        ):
+        if operation.__class__ in [
+            SetClockFrequency,
+            ShiftClockPhase,
+            ResetClockPhase,
+            VoltageOffset,
+        ]:
             assert operation.duration == 0, operation
-        elif operation.__class__ in [SetClockFrequency, ShiftClockPhase]:
-            assert operation.duration == 8e-9, operation
         elif operation.__class__ is SuddenNetZeroPulse:
             assert (
                 operation.duration
@@ -319,7 +315,7 @@ class TestPulseLevelOperation:
 
 def test_deprecated_path_args_voltage_offset():
     with pytest.warns(FutureWarning, match="0.20.0"):
-        VoltageOffset(  # pylint: disable=no-value-for-parameter
+        VoltageOffset(
             offset_path_0=0.5,
             offset_path_1=0.1,
             port="port",

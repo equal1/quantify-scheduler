@@ -30,7 +30,7 @@ set_datadir(temp_dir.name)
 ```
 
 In this section we introduce how to configure [Qblox Clusters](https://www.qblox.com/products#cluster) and the options available for them via Quantify.
-For information about their lower-level functionality, you can consult the [Qblox Instruments documentation](https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/).
+For information about their lower-level functionality, you can consult the [Qblox Instruments documentation](https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/).
 For information on the process of compilation to hardware, see {ref}`sec-tutorial-compiling`.
 
 ## General hardware mapping structure, example
@@ -282,6 +282,14 @@ The `MarkerPulse` is defined by adding a `MarkerPulse` to the sequence in questi
 schedule.add(MarkerPulse(duration=52e-9, port="q0:switch"))
 ```
 
+#### Clock names
+
+Clocks in digital channels serve simply as a label and are automatically set to {attr}`"digital" <quantify_scheduler.resources.DigitalClockResource.IDENTITY>` at `MarkerPulse` initialization, but it is also possible to specify a custom clock name (for example, a clock name from the device configuration, like `qe0.ge0`). This makes it possible to connect a digital channel to a given port-clock combination in a device element, for example. Similar to clocks for non-digital channels, the clock must be either
+
+- specified in the device configuration,
+- added to the {class}`~quantify_scheduler.schedules.schedule.Schedule` as a {class}`~quantify_scheduler.resources.ClockResource`, or
+- a clock that is present by default in the schedule resources, i.e. {attr}`"digital" <quantify_scheduler.resources.DigitalClockResource.IDENTITY>` or {attr}`"cl0.baseband" <quantify_scheduler.resources.BasebandClockResource.IDENTITY>`.
+
 ### Marker configuration
 
 The markers can be configured by adding a `"marker_debug_mode_enable"` key to channel configurations. If the value is set to True, the operations defined for this channel will be accompanied by a 4 ns trigger pulse on the marker located next to the channel port.
@@ -340,7 +348,7 @@ For QRM, QRM-RF and QCM-RF modules you can set the gain and attenuation paramete
 
 #### Gain configuration
 
-* The parameters `"input_gain_I/0"` and `input_gain_Q/1` for QRM correspond to the qcodes parameters [in0_gain](https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/api_reference/qcm_qrm.html#QRM.in0_gain) and [in1_gain](https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/api_reference/qcm_qrm.html#QRM.in1_gain) respectively.
+* The parameters `"input_gain_I/0"` and `input_gain_Q/1` for QRM correspond to the qcodes parameters [in0_gain](https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/api_reference/module.html#QRM.in0_gain) and [in1_gain](https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/api_reference/module.html#QRM.in1_gain) respectively.
 
 Note, these parameters only affect the QRM modules. For complex inputs you have to use `"input_gain_I"` and `"input_gain_Q"`, and for real inputs `"input_gain_0"` and `"input_gain_1"`.
 
@@ -372,8 +380,8 @@ emphasize-lines: 5,6,13,17
 
 #### Attenuation configuration
 
-* The parameter `"complex_output_*"."output_att"` and `"complex_input_0.input_att"` for QRM-RF correspond to the qcodes parameters [out0_att](https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/api_reference/qcm_qrm.html#QRM_RF.out0_att) and [in0_att](https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/api_reference/qcm_qrm.html#QRM_RF.in0_att) respectively.
-* The parameter `"complex_output_*"."output_att"` for QCM-RF correspond to the qcodes parameters [out0_att](https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/api_reference/qcm_qrm.html#QCM_RF.out0_att) and [out1_att](https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/api_reference/qcm_qrm.html#QCM_RF.out1_att).
+* The parameter `"complex_output_*"."output_att"` and `"complex_input_0.input_att"` for QRM-RF correspond to the qcodes parameters [out0_att](https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/api_reference/module.html#QRM_RF.out0_att) and [in0_att](https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/api_reference/module.html#QRM_RF.in0_att) respectively.
+* The parameter `"complex_output_*"."output_att"` for QCM-RF correspond to the qcodes parameters [out0_att](https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/api_reference/module.html#QCM_RF.out0_att) and [out1_att](https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/api_reference/module.html#QCM_RF.out1_att).
 
 Note, that these parameters only affect RF modules.
 
@@ -406,7 +414,7 @@ emphasize-lines: 5,9,16,20
 },
 ```
 
-See [Qblox Instruments: QCM-QRM](https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/api_reference/qcm_qrm.html) documentation for allowed values.
+See [Qblox Instruments: QCM-QRM](https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/api_reference/module.html) documentation for allowed values.
 
 
 ### Maximum AWG output voltage

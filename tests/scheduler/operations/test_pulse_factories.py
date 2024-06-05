@@ -1,4 +1,5 @@
 """Tests for pulse factory functions."""
+
 from functools import partial
 
 import numpy as np
@@ -8,7 +9,6 @@ from quantify_scheduler.backends.qblox.operations import (
     long_ramp_pulse,
     long_square_pulse,
     staircase_pulse,
-    VoltageOffset,
 )
 from quantify_scheduler.operations.pulse_factories import (
     long_ramp_pulse as old_long_ramp_pulse,
@@ -26,6 +26,7 @@ from quantify_scheduler.operations.pulse_factories import (
 from quantify_scheduler.operations.pulse_library import (
     ReferenceMagnitude,
     SquarePulse,
+    VoltageOffset,
 )
 
 
@@ -49,6 +50,7 @@ def test_rxy_drag_pulse():
             "duration": 1e-7,
             "phase": 19,
             "nr_sigma": 4,
+            "sigma": None,
             "clock": "q0.ro",
             "port": "q0:res",
             "t0": 0,
@@ -70,6 +72,7 @@ def test_rxy_gauss_pulse():
             "duration": 1e-7,
             "phase": 10,
             "nr_sigma": 4,
+            "sigma": None,
             "clock": "q0.ro",
             "port": "q0:res",
             "t0": 0,
@@ -174,7 +177,7 @@ def test_staircase_raises_not_multiple_of_grid_time():
             final_amp=0.9,
             num_steps=20,
             duration=20 * 9e-9,
-            grid_time_ns=4,
+            min_operation_time_ns=4,
             port="q0:res",
             clock="q0.ro",
         )
@@ -190,21 +193,12 @@ def test_staircase_raises_step_duration_too_short():
             final_amp=0.9,
             num_steps=20,
             duration=20 * 4e-9,
-            grid_time_ns=8,
+            min_operation_time_ns=8,
             port="q0:res",
             clock="q0.ro",
         )
     # Exact phrasing is not important, but should be about staircase
     assert "step" in str(err.value) and "staircase" in str(err.value)
-
-
-def test_bad_duration_raises():
-    """Test a long_square_pulse with a duration that is not a multiple of grid time."""
-    with pytest.raises(ValueError) as err:
-        _ = long_square_pulse(
-            amp=0.5, duration=2.5e-6 + 1e-9, port="r0:res", clock="q0.ro"
-        )
-    assert "The duration of a long_square_pulse must be a multiple of" in str(err.value)
 
 
 @pytest.mark.parametrize(

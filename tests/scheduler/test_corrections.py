@@ -1,8 +1,3 @@
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-# pylint: disable=redefined-outer-name
-
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
 """Tests for pulse and acquisition corrections."""
@@ -25,6 +20,8 @@ from quantify_scheduler.operations.pulse_library import (
 )
 from quantify_scheduler.operations.gate_library import X
 from quantify_scheduler.schedules.schedule import Schedule
+
+from tests import is_zhinst_available
 
 
 # --------- Test fixtures ---------
@@ -138,12 +135,15 @@ def test_distortion_correct_pulse(
         for use_numpy in [True, False]
     ],
 )
-def test_apply_distortion_corrections(
+def test_apply_software_distortion_corrections(
     mock_setup_basic_transmon_with_standard_params,
     hardware_options_distortion_corrections,
     two_qubit_gate_schedule,
     config_type,
 ):
+    if "zhinst" in config_type and not is_zhinst_available():
+        pytest.skip("zhinst backend not installed")
+
     quantum_device = mock_setup_basic_transmon_with_standard_params["quantum_device"]
     if "Qblox" in config_type:
         hardware_compilation_config = {
@@ -203,7 +203,7 @@ def test_apply_distortion_corrections(
         list(compiled_sched.operations.keys())[1] == operation_hash
     ), f"Key of CZ operation remains identical"
 
-    assert (  # pylint: disable=unidiomatic-typecheck
+    assert (
         type(list(compiled_sched.operations.values())[1]) is NumericalPulse
     ), f"Type of CZ operation is now NumericalPulse"
 
@@ -273,10 +273,10 @@ def test_apply_latency_corrections_hardware_options_invalid_raises(
 
 
 @pytest.mark.parametrize("use_numpy_array", (True, False))
-def test_apply_distortion_corrections_stitched_pulse_warns(
+def test_apply_software_distortion_corrections_stitched_pulse_warns(
     mock_setup_basic_transmon,
     hardware_options_distortion_corrections,
-    use_numpy_array,  # pylint: disable=unused-argument
+    use_numpy_array,
 ):
     port = "q2:fl"
     clock = "cl0.baseband"

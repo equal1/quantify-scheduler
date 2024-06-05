@@ -1,10 +1,7 @@
 # Repository: https://gitlab.com/quantify-os/quantify-scheduler
 # Licensed according to the LICENCE file on the main branch
-# pylint: disable=missing-module-docstring
-# pylint: disable=missing-class-docstring
-# pylint: disable=missing-function-docstring
-# pylint: disable=unused-argument
-# pylint: disable=too-many-arguments
+
+
 from __future__ import annotations
 
 import gc
@@ -27,7 +24,7 @@ from quantify_scheduler.instrument_coordinator.components import base as base_co
 from quantify_scheduler.instrument_coordinator.components.qblox import ClusterComponent
 from quantify_scheduler.operations.gate_library import Reset
 
-from tests.scheduler.backends.test_qblox_backend import (  # pylint: disable=unused-import
+from tests.scheduler.backends.test_qblox_backend import (
     dummy_cluster,
 )
 
@@ -80,13 +77,6 @@ def fixture_dummy_components(
             )
         components.append(comp)
 
-    def cleanup_tmp():
-        # This should prevent the garbage collector from colleting the qcodes instrument
-        for instrument in instruments:
-            instrument.close()
-
-    request.addfinalizer(cleanup_tmp)
-
     return components
 
 
@@ -101,13 +91,6 @@ def fixture_instrument_coordinator(request, component_names) -> InstrumentCoordi
     instrument_coordinator._compiled_schedule = dict(
         compiled_instructions={name: {} for name in component_names}
     )
-
-    def cleanup_tmp():
-        # This should prevent the garbage collector from collecting the qcodes
-        # instrument
-        instrument_coordinator.close()
-
-    request.addfinalizer(cleanup_tmp)
 
     return instrument_coordinator
 
@@ -125,13 +108,6 @@ def fixture_zi_instrument_coordinator(
     zi_instrument_coordinator._compiled_schedule = dict(
         compiled_instructions={name: {} for name in component_names}
     )
-
-    def cleanup_tmp():
-        # This should prevent the garbage collector from collecting the qcodes
-        # instrument
-        zi_instrument_coordinator.close()
-
-    request.addfinalizer(cleanup_tmp)
 
     return zi_instrument_coordinator
 
@@ -280,15 +256,24 @@ def test_start(instrument_coordinator, dummy_components):
     # Arrange
     component1 = dummy_components.pop(0)
     component2 = dummy_components.pop(0)
+    component3 = dummy_components.pop(0)
     instrument_coordinator.add_component(component1)
     instrument_coordinator.add_component(component2)
+    instrument_coordinator.add_component(component3)
 
     # Act
+    test_sched = Schedule(name="test_schedule")
+    args = {"dev0": {"foo": 0}, "dev1": {"foo": 1}}
+    test_sched["compiled_instructions"] = args
+    compiled_sched = CompiledSchedule(test_sched)
+    instrument_coordinator.prepare(compiled_sched)
+
     instrument_coordinator.start()
 
     # Assert
     component1.start.assert_called()
     component2.start.assert_called()
+    component3.start.assert_not_called()
 
 
 def test_stop(instrument_coordinator, dummy_components):
@@ -463,34 +448,28 @@ def test_retrieve_hardware_logs__qblox_hardware(
 ):
     cluster_name = "cluster0"
     hardware_cfg = {
-        "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
-        f"{cluster_name}": {
-            "instrument_type": "Cluster",
-            "ref": "internal",
-            f"{cluster_name}_module2": {
-                "instrument_type": "QCM",
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "port": "q3:res",
-                            "clock": "q3.ro",
-                            "interm_freq": 300e6,
-                        }
-                    ],
+        "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+        "hardware_description": {
+            f"{cluster_name}": {
+                "instrument_type": "Cluster",
+                "modules": {
+                    "2": {"instrument_type": "QCM"},
+                    "4": {"instrument_type": "QRM"},
                 },
-            },
-            f"{cluster_name}_module4": {
-                "instrument_type": "QRM",
-                "complex_output_0": {
-                    "portclock_configs": [
-                        {
-                            "port": "q3:mw",
-                            "clock": "q3.01",
-                            "interm_freq": 50e6,
-                        },
-                    ],
-                },
-            },
+                "ref": "internal",
+            }
+        },
+        "hardware_options": {
+            "modulation_frequencies": {
+                "q3:res-q3.ro": {"interm_freq": 300000000.0},
+                "q3:mw-q3.01": {"interm_freq": 50000000.0},
+            }
+        },
+        "connectivity": {
+            "graph": [
+                [f"{cluster_name}.module2.complex_output_0", "q3:res"],
+                [f"{cluster_name}.module4.complex_output_0", "q3:mw"],
+            ]
         },
     }
 

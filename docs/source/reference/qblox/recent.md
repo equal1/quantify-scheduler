@@ -1,24 +1,16 @@
 # Recent interface changes
 
-## 0.18.0: 
+## 0.20.1: DistortionCorrection
 
-- Compilation 
-  - The `backend` field in the `HardwareCompilationConfig` was replaced by the `config_type` field, which contains a (string) reference to the backend-specific `HardwareCompilationConfig` datastructure.
-  - The `backend` field was removed from the `DeviceCompilationConfig`.
-  - The `compilation_passes` field was moved from the `SerialCompilationConfig` into the `DeviceCompilationConfig` and `HardwareCompilationConfig` datastructures.
-  - How to migrate:
-    - `DeviceCompilationConfig`: If you are loading a stored `DeviceCompilationConfig` (instead of relying on the device config generation of the `QuantumDevice`), remove the `"backend"` key.
-    - `HardwareCompilationConfig`: If you are already using the new-style `HardwareCompilationConfig`, change the `"backend"` key to `"config_type"`:
-      -  `"config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig"`
+- `DistortionCorrection` is now deprecated in favor of `SoftwareDistortionCorrection`. 
 
-- Schedulables 
-  - Rename `Schedulable["operation_repr"]` to `Schedulable["operation_id"]`
+## 0.18.0: HardwareCompilationConfig and DeviceCompilationConfig
 
-- InstrumentCoordinator 
-  - Arming the sequencers is now done via `InstrumentCoordinator.start()` instead of `InstrumentCoordinator.prepare()`.
+- `DeviceCompilationConfig`: The `backend` field was replaced by the `config_type` field.
+  - If you are loading a stored `DeviceCompilationConfig` (instead of relying on the device config generation of the `QuantumDevice`), remove the `"backend"` key.
+- `HardwareCompilationConfig`: The `backend` field was removed.
+  - Only if you are already using the `HardwareCompilationConfig`, remove the `"backend"` key and add `"config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig"`.
 
-- Pulses 
-  - The phase argument for `SquarePulse` has been removed.
 
 ## 0.15.0: HardwareCompilationConfig structure
 
@@ -36,7 +28,7 @@ The {code}`instruction_generated_pulses_enabled` option is deprecated and will b
    is now always set to `False` before the execution of a schedule. This way, the markers
    behave as expected, even if they were previously overridden.
    Please refer to the
-   [qblox-instruments documentation](https://qblox-qblox-instruments.readthedocs-hosted.com/en/master/cluster/qrm_rf.html#marker-output-channels) for more information about the `marker_ovr_en` and `marker_ovr_value` parameters.
+   [qblox-instruments documentation](https://qblox-qblox-instruments.readthedocs-hosted.com/en/main/cluster/qrm_rf.html#marker-output-channels) for more information about the `marker_ovr_en` and `marker_ovr_value` parameters.
 
 2. For deactivating the custom Qblox downconverter, set `downconverter_freq` to `null` (json) or `None` (instead of `0` before).
     ```{note}
@@ -91,7 +83,11 @@ This change has introduced a new syntax for the hardware configuration file:
 
 3. We provide a helper function that may be used to convert from old to new syntax:
 
-   - {func}`~quantify_scheduler.backends.qblox.helpers.convert_hw_config_to_portclock_configs_spec`
+    ```{warning}
+    This helper function has been removed in quantify-scheduler 0.18.0.
+    ```
+
+   - `quantify_scheduler.backends.qblox.helpers.convert_hw_config_to_portclock_configs_spec`
    - Temporarily, this method is called by the Qblox backend before compilation.
 
 The old syntax:
@@ -99,32 +95,34 @@ The old syntax:
 ```python
 hardware_cfg = {
     "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
-    "qcm0": {
-        "instrument_type": "Pulsar_QCM",
+    "cluster0": {
+        "instrument_type": "Cluster",
         "ref": "internal",
-        "complex_output_0": {
-            "lo_name": "lo0",
-            "seq0": {
-                "port": "q0:mw",
-                "clock": "q0.01",
-                "interm_freq": 50e6,
-                "latency_correction" : 4e-9
+        "cluster0_module1: {
+            "instrument_type": "QCM",
+            "complex_output_0": {
+                "lo_name": "lo0",
+                "seq0": {
+                    "port": "q0:mw",
+                    "clock": "q0.01",
+                    "interm_freq": 50e6,
+                    "latency_correction" : 4e-9
+                },
+                "seq1": {
+                    "port": "q1:mw",
+                    "clock": "q1.01",
+                    "interm_freq": 100e6
+                }
             },
-            "seq1": {
-                "port": "q1:mw",
-                "clock": "q1.01",
-                "interm_freq": 100e6
-            }
+            "complex_output_1": {
+                "lo_name": "lo1",
+                "seq2": {
+                    "port": "q2:mw",
+                    "clock": "q2.01",
+                    "interm_freq": None
+                }
+            },
         },
-        "complex_output_1": {
-            "lo_name": "lo1",
-            "seq2": {
-                "port": "q2:mw",
-                "clock": "q2.01",
-                "interm_freq": None
-            }
-        }
-    },
     "lo0": {"instrument_type": "LocalOscillator", "frequency": None, "power": 20},
     "lo1": {"instrument_type": "LocalOscillator", "frequency": 7.2e9, "power": 20}
 }
@@ -134,39 +132,41 @@ The new syntax:
 
 ```python
 hardware_cfg = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
+    "backend": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
     "latency_corrections": {
         "q0:mw-q0.01": 4e-9
     },
-    "qcm0": {
-        "instrument_type": "Pulsar_QCM",
+    "cluster0": {
+        "instrument_type": "Cluster",
         "ref": "internal",
-        "complex_output_0": {
-            "lo_name": "lo0",
-            "portclock_configs": [
-                {
-                    "port": "q0:mw",
-                    "clock": "q0.01",
-                    "interm_freq": 50e6
-                },
-                {
-                    "port": "q1:mw",
-                    "clock": "q1.01",
-                    "interm_freq": 100e6
-                }
-            ]
+        "cluster0_module1: {
+            "complex_output_0": {
+                "instrument_type": "QCM",
+                "lo_name": "lo0",
+                "portclock_configs": [
+                    {
+                        "port": "q0:mw",
+                        "clock": "q0.01",
+                        "interm_freq": 50e6
+                    },
+                    {
+                        "port": "q1:mw",
+                        "clock": "q1.01",
+                        "interm_freq": 100e6
+                    }
+                ]
+            },
+            "complex_output_1": {
+                "lo_name": "lo1",
+                "portclock_configs": [
+                    {
+                        "port": "q2:mw",
+                        "clock": "q2.01",
+                        "interm_freq": None
+                    }
+                ]
+            }
         },
-        "complex_output_1": {
-            "lo_name": "lo1",
-            "portclock_configs": [
-                {
-                    "port": "q2:mw",
-                    "clock": "q2.01",
-                    "interm_freq": None
-                }
-            ]
-        }
-    },
     "lo0": {"instrument_type": "LocalOscillator", "frequency": None, "power": 20},
     "lo1": {"instrument_type": "LocalOscillator", "frequency": 7.2e9, "power": 20}
 }

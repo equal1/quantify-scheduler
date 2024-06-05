@@ -82,7 +82,7 @@ In this section we introduce how to use voltage offsets and build up long wavefo
 (sec-qblox-offsets-long-voltage-offsets)=
 ## Voltage offsets
 
-Qblox modules can set and hold a voltage on their outputs using the {class}`~quantify_scheduler.backends.qblox.operations.pulse_library.VoltageOffset` operation. The operation supports real and complex outputs, and it has effectively zero duration, meaning it takes effect at the exact moment you schedule it, and you can schedule other operations simultaneously. It can be used as follows:
+Qblox modules can set and hold a voltage on their outputs using the {class}`~quantify_scheduler.operations.pulse_library.VoltageOffset` operation. The operation supports real and complex outputs, and it has effectively zero duration, meaning it takes effect at the exact moment you schedule it, and you can schedule other operations simultaneously. It can be used as follows:
 
 ```{code-cell} ipython3
 ---
@@ -91,7 +91,7 @@ mystnb:
   remove_code_outputs: true
 ---
 
-from quantify_scheduler.backends.qblox.operations import VoltageOffset
+from quantify_scheduler.operations.pulse_library import VoltageOffset
 
 
 voltage_offset_real = VoltageOffset(
@@ -239,7 +239,13 @@ quantum_device = QuantumDevice("quantum_device")
 device_compiler = SerialCompiler("Device compiler", quantum_device)
 
 comp_sched = device_compiler.compile(sched)
-comp_sched.plot_pulse_diagram(plot_backend="plotly")
+comp_sched.plot_pulse_diagram(
+    plot_backend="plotly", combine_waveforms_on_same_port=True
+)
+```
+
+```{tip}
+Add the argument `combine_waveforms_on_same_port=True` to `plot_pulse_diagram` to show the appearance of the final hardware output (default `combine_waveforms_on_same_port=False` shows individual pulse elements). 
 ```
 
 Using these factory functions, the resulting square and staircase pulses use no waveform memory at all. The ramp pulse uses waveform memory for a short section of the waveform, which is repeated multiple times.
@@ -284,7 +290,9 @@ sched = Schedule("Long soft square pulse")
 sched.add(pulse)
 
 comp_sched = device_compiler.compile(sched)
-comp_sched.plot_pulse_diagram(plot_backend="plotly")
+comp_sched.plot_pulse_diagram(
+    plot_backend="plotly", combine_waveforms_on_same_port=True
+)
 ```
 
 Alternatively, the building methods of the {class}`~quantify_scheduler.backends.qblox.operations.stitched_pulse.StitchedPulseBuilder` can be conveniently **chained** to create a {class}`~quantify_scheduler.backends.qblox.operations.stitched_pulse.StitchedPulse` via more elegant syntax:

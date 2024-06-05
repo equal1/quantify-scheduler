@@ -49,7 +49,8 @@ class Rxy(Operation):
 
         # this solves an issue where different rotations with the same rotation angle
         # modulo a full period are treated as distinct operations in the OperationDict
-        theta = round((theta + 180) % 360 - 180, 8)
+        # Here we map [0,360[ onto ]-180,180] so that X180 has positive amplitude
+        theta = round(_modulo_360_with_mapping(theta), 8)
 
         phi = round(phi % 360, 8)
 
@@ -254,7 +255,8 @@ class Rz(Operation):
 
         # this solves an issue where different rotations with the same rotation angle
         # modulo a full period are treated as distinct operations in the OperationDict
-        theta = (theta + 180) % 360 - 180
+        # Here we map [0,360[ onto ]-180,180] so that X180 has positive amplitude
+        theta = _modulo_360_with_mapping(theta)
 
         tex = r"$R_{z}^{" + f"{theta:.0f}" + r"}$"
         plot_func = (
@@ -347,6 +349,48 @@ class Z90(Rz):
     def __str__(self) -> str:
         qubit = self.data["gate_info"]["qubits"][0]
         return f"{self.__class__.__name__}(qubit='{qubit}')"
+
+
+class H(Operation):
+    r"""
+    A single qubit Hadamard gate.
+
+    Note that the gate uses :math:`R_z(\pi) = -iZ`, adding a global phase of :math:`-\pi/2`.
+    This operation can be represented by the following unitary:
+
+    .. math::
+
+        H = Y90 \cdot Z = \frac{-i}{\sqrt{2}}\begin{bmatrix}
+             1 & 1 \\
+             1 & -1 \\ \end{bmatrix}
+
+    Parameters
+    ----------
+    qubit
+        The target qubit.
+
+    """
+
+    def __init__(self, *qubits: str):
+        tex = r"$H$"
+        plot_func = (
+            "quantify_scheduler.schedules._visualization.circuit_diagram.gate_box"
+        )
+
+        unitary = -1j / np.sqrt(2) * np.array([[1, 1], [1, -1]], dtype=complex)
+        super().__init__(f"H, '{qubits}')")
+        self.data["gate_info"] = {
+            "unitary": unitary,
+            "tex": tex,
+            "plot_func": plot_func,
+            "qubits": list(qubits),
+            "operation_type": "H",
+        }
+        self._update()
+
+    def __str__(self) -> str:
+        qubits = map(lambda x: f"'{x}'", self.data["gate_info"]["qubits"])
+        return f'{self.__class__.__name__}({",".join(qubits)})'
 
 
 class CNOT(Operation):
@@ -533,7 +577,9 @@ class Measure(Operation):
         Index of the register where the measurement is stored.  If None specified,
         this defaults to writing the result of all qubits to acq_index 0. By default
         None.
-    acq_protocol
+    acq_protocol : "SSBIntegrationComplex" | "Trace" | "TriggerCount" | \
+            "NumericalSeparatedWeightedIntegration" | \
+            "NumericalWeightedIntegration" | None, optional
         Acquisition protocols that are supported. If ``None`` is specified, the
         default protocol is chosen based on the device and backend configuration. By
         default None.
@@ -541,6 +587,9 @@ class Measure(Operation):
         The binning mode that is to be used. If not None, it will overwrite the
         binning mode used for Measurements in the circuit-to-device compilation
         step. By default None.
+    feedback_trigger_label : str
+        The label corresponding to the feedback trigger, which is mapped by the
+        compiler to a feedback trigger address on hardware, by default None.
 
     """
 
@@ -555,11 +604,13 @@ class Measure(Operation):
                 "SSBIntegrationComplex",
                 "Trace",
                 "TriggerCount",
-                "NumericalWeightedIntegrationComplex",
+                "NumericalSeparatedWeightedIntegration",
+                "NumericalWeightedIntegration",
                 "ThresholdedAcquisition",
             ]
         ] = None,
         bin_mode: BinMode | None = None,
+        feedback_trigger_label: Optional[str] = None,
     ):
         # this if else statement a workaround to support multiplexed measurements (#262)
 
@@ -594,6 +645,7 @@ class Measure(Operation):
                     "acq_protocol": acq_protocol,
                     "bin_mode": bin_mode,
                     "operation_type": "measure",
+                    "feedback_trigger_label": feedback_trigger_label,
                 },
             }
         )
@@ -606,10 +658,55 @@ class Measure(Operation):
         acq_index = gate_info["acq_index"]
         acq_protocol = gate_info["acq_protocol"]
         bin_mode = gate_info["bin_mode"]
+        feedback_trigger_label = gate_info["feedback_trigger_label"]
         return (
             f'{self.__class__.__name__}({",".join(qubits)}, '
             f"acq_channel={acq_channel}, "
             f"acq_index={acq_index}, "
             f'acq_protocol="{acq_protocol}", '
-            f"bin_mode={str(bin_mode)})"
+            f"bin_mode={str(bin_mode)}, "
+            f"feedback_trigger_label={feedback_trigger_label})"
         )
+
+
+def _modulo_360_with_mapping(theta: float) -> float:
+    """
+    Maps an input angle ``theta`` (in degrees) onto the range ``]-180, 180]``.
+
+    By mapping the input angle to the range ``]-180, 180]`` (where -180 is
+    excluded), it ensures that the output amplitude is always minimized on the
+    hardware. This mapping should not have an effect on the qubit in general.
+
+    -180 degrees is excluded to ensure positive amplitudes in the gates like
+    X180 and Z180.
+
+    Note that an input of -180 degrees is remapped to 180 degrees to maintain
+    the positive amplitude constraint.
+
+    Parameters
+    ----------
+    theta : float
+        The rotation angle in degrees. This angle will be mapped to the interval
+        ``]-180, 180]``.
+
+    Returns
+    -------
+    float
+        The mapped angle in degrees, which will be in the range ``]-180, 180]``.
+        This mapping ensures the output amplitude is always minimized for
+        transmon operations.
+
+    Example
+    -------
+    ```
+    >>> _modulo_360_with_mapping(360)
+    0.0
+    >>> _modulo_360_with_mapping(-180)
+    180.0
+    >>> _modulo_360_with_mapping(270)
+    -90.0
+    ```
+
+    """
+    mapped_theta = -((-theta - 180) % 360) + 180
+    return mapped_theta

@@ -51,12 +51,16 @@ In this tutorial we will use the Qblox dummy device, but for real hardware, the 
 ```{code-cell} ipython3
 from qblox_instruments import Cluster, ClusterType
 from quantify_scheduler.instrument_coordinator.components.qblox import ClusterComponent
+from quantify_scheduler.helpers.qblox_dummy_instrument import start_dummy_cluster_armed_sequencers
 
 cluster = Cluster("cluster0",
                   identifier="<ip address>",
                   dummy_cfg={1: ClusterType.CLUSTER_QRM},
           )
 cluster_component = ClusterComponent(cluster)
+
+# Temporarily fixing dummy cluster's deficiency.
+cluster.start_sequencer = lambda : start_dummy_cluster_armed_sequencers(cluster_component)
 ```
 
 ```{code-cell} ipython3
@@ -78,22 +82,40 @@ device.instr_instrument_coordinator("instrument_coordinator")
 
 ```{code-cell} ipython3
 hardware_config = {
-    "backend": "quantify_scheduler.backends.qblox_backend.hardware_compile",
-    "cluster0": {
-        "ref": "internal",
-        "instrument_type": "Cluster",
-        "cluster0_module1": {
-             "instrument_type": "QRM",
-             "complex_output_0": {
-                 "portclock_configs": [
-                     {"port": "q0:res", "clock": "q0.ro", "interm_freq": 0},
-                     {"port": "q1:res", "clock": "q1.ro", "interm_freq": 0},
-                     {"port": "q0:mw", "clock" : "q0.01", "interm_freq": 0}
-                 ]
-             }
+    "config_type": "quantify_scheduler.backends.qblox_backend.QbloxHardwareCompilationConfig",
+    "hardware_description": {
+        "cluster0": {
+            "instrument_type": "Cluster",
+            "modules": {
+                "1": {
+                    "instrument_type": "QRM"
+                }
+            },
+            "ref": "internal"
         }
     },
+    "hardware_options": {
+        "modulation_frequencies": {
+            "q0:res-q0.ro": {
+                "interm_freq": 0
+            },
+            "q1:res-q1.ro": {
+                "interm_freq": 0
+            },
+            "q0:mw-q0.01": {
+                "interm_freq": 0
+            }
+        }
+    },
+    "connectivity": {
+        "graph": [
+            ["cluster0.module1.complex_output_0", "q0:res"],
+            ["cluster0.module1.complex_output_0", "q1:res"],
+            ["cluster0.module1.complex_output_0", "q0:mw"]
+        ]
+    }
 }
+
 device.hardware_config(hardware_config)
 ```
 
@@ -475,7 +497,7 @@ As expected, it has only two values, and the value of `acq_index_<acq_channel>=1
 (sec-weighted-ssb)=
 ### Weighted single-sideband integration acquisition
 
-_Weighted_ single-sideband (SBB) integration works almost the same as regular SSB integration. In weighted SSB integration, the acquired (demodulated) data points are multiplied together with points of a _weight_ waveform. The relevant acquisition class is {class}`~quantify_scheduler.operations.acquisition_library.NumericalWeightedIntegrationComplex`.
+_Weighted_ single-sideband (SBB) integration works almost the same as regular SSB integration. In weighted SSB integration, the acquired (demodulated) data points are multiplied together with points of a _weight_ waveform. The relevant acquisition class is {class}`~quantify_scheduler.operations.acquisition_library.NumericalSeparatedWeightedIntegration`.
 
 The weights can be provided in the form of two numerical arrays, `weights_a` for the I-path and `weights_b` for the Q-path of the acquisition signal, together with the sampling rate (`weights_sampling_rate`) of these arrays. The `quantify-scheduler` hardware backends will resample the weights if needed to match the hardware sampling rate. Note that the length of the weights arrays determines the integration time of the acquisition. All values in the weight arrays must be in the range `[-1, 1]`.
 
@@ -491,7 +513,7 @@ mystnb:
   remove_code_outputs: true
 ---
 from quantify_scheduler.operations.acquisition_library import (
-    NumericalWeightedIntegrationComplex,
+    NumericalSeparatedWeightedIntegration,
 )
 
 
@@ -510,7 +532,7 @@ def add_pulse_and_weighted_acquisition_to_schedule(
 ):
     schedule.add(
         SquarePulse(
-            duration=1000,
+            duration=1e-6,
             amp=0.5,
             port="q0:res",
             clock="q0.ro",
@@ -519,7 +541,7 @@ def add_pulse_and_weighted_acquisition_to_schedule(
         rel_time=1e-6,  # Idle time before the pulse is played
     )
     schedule.add(
-        NumericalWeightedIntegrationComplex(
+        NumericalSeparatedWeightedIntegration(
             port="q0:res",
             clock="q0.ro",
             weights_a=weights_a,
@@ -607,7 +629,7 @@ acquisition
 
 The data set contains three data points corresponding to the acquisitions we scheduled. The first acquisition with the maximum amplitude (1.0) square weights shows the highest voltage, the second one with the weights halved also shows half the voltage. The third, corresponding to the sinusoidal weights with an average of 0, shows 0 as expected.
 
-As a final note, weighted integration can also be scheduled at the {ref}`gate-level <Gate-level acquisitions>` by specifying `"NumericalWeightedIntegrationComplex"` as the acquisition protocol and providing the weights in the quantum device element {attr}`.BasicTransmonElement.measure`, for example:
+As a final note, weighted integration can also be scheduled at the {ref}`gate-level <Gate-level acquisitions>` by specifying `"NumericalSeparatedWeightedIntegration"` as the acquisition protocol and providing the weights in the quantum device element {attr}`.BasicTransmonElement.measure`, for example:
 
 ```
 <qubit>.measure.acq_weights_a(sine_weights)
@@ -701,13 +723,13 @@ rot = np.arctan(-b)-np.pi/2
 threshold = -a*b/np.sqrt(1+b*b)
 
 dummy_slot_idx = 1
-cluster.delete_dummy_binned_acquisition_data(slot_idx=dummy_slot_idx, sequencer=0)
+cluster.delete_dummy_binned_acquisition_data(slot_idx=dummy_slot_idx, sequencer=1)
 
 dummy_data_0 = [
         DummyBinnedAcquisitionData(data=(1e3*a, 1e3*b), thres=0, avg_cnt=0)
         for a, b in zip(i,q)
 ]
-cluster.set_dummy_binned_acquisition_data(slot_idx=dummy_slot_idx, sequencer=0, acq_index_name="0", data=dummy_data_0)
+cluster.set_dummy_binned_acquisition_data(slot_idx=dummy_slot_idx, sequencer=1, acq_index_name="0", data=dummy_data_0)
 ```
 
 Next, after compiling the schedule and retrieving the acquisitions from the hardware,

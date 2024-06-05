@@ -4,6 +4,7 @@
 from typing import Any, Dict, Tuple
 import math
 
+import numpy as np
 from qcodes.instrument import InstrumentChannel
 from qcodes.instrument.base import InstrumentBase
 from qcodes.instrument.parameter import (
@@ -21,6 +22,7 @@ from quantify_scheduler.operations import (
     pulse_factories,
     pulse_library,
     measurement_factories,
+    composite_factories,
 )
 
 
@@ -244,20 +246,22 @@ class DispersiveMeasurement(InstrumentChannel):
         self.acq_weights_a = ManualParameter(
             name="acq_weights_a",
             instrument=self,
-            initial_value=kwargs.get("acq_weights_a", None),
+            initial_value=kwargs.get("acq_weights_a", np.array([], dtype=np.float64)),
             vals=validators.Arrays(),
         )
         """The weights for the I path. Used when specifying the
-        ``"NumericalWeightedIntegrationComplex"`` acquisition protocol."""
+        ``"NumericalSeparatedWeightedIntegration"`` or the
+        ``"NumericalWeightedIntegration"`` acquisition protocol."""
 
         self.acq_weights_b = ManualParameter(
             name="acq_weights_b",
             instrument=self,
-            initial_value=kwargs.get("acq_weights_b", None),
+            initial_value=kwargs.get("acq_weights_b", np.array([], dtype=np.float64)),
             vals=validators.Arrays(),
         )
         """The weights for the Q path. Used when specifying the
-        ``"NumericalWeightedIntegrationComplex"`` acquisition protocol."""
+        ``"NumericalSeparatedWeightedIntegration"`` or the
+        ``"NumericalWeightedIntegration"`` acquisition protocol."""
 
         self.acq_weights_sampling_rate = ManualParameter(
             name="acq_weights_sampling_rate",
@@ -266,7 +270,8 @@ class DispersiveMeasurement(InstrumentChannel):
             vals=validators.Numbers(min_value=1, max_value=10e9),
         )
         """The sample rate of the weights arrays, in Hertz. Used when specifying the
-        ``"NumericalWeightedIntegrationComplex"`` acquisition protocol."""
+        ``"NumericalSeparatedWeightedIntegration"`` or the
+        ``"NumericalWeightedIntegration"`` acquisition protocol."""
 
         ro_acq_weight_type_validator = validators.Enum("SSB", "Numerical")
         self.acq_weight_type = ManualParameter(
@@ -475,6 +480,12 @@ class BasicTransmonElement(DeviceElement):
                         "theta",
                     ],  # the keys from the gate info to pass to the factory function
                 ),
+                "H": OperationCompilationConfig(
+                    factory_func=composite_factories.hadamard_as_y90z,
+                    factory_kwargs={
+                        "qubit": f"{self.name}",
+                    },
+                ),
                 # the measurement also has a parametrized mapping, and uses a
                 # factory function.
                 "measure": OperationCompilationConfig(
@@ -504,6 +515,7 @@ class BasicTransmonElement(DeviceElement):
                         "acq_index",
                         "bin_mode",
                         "acq_protocol",
+                        "feedback_trigger_label",
                     ],
                 ),
             }
@@ -515,7 +527,7 @@ class BasicTransmonElement(DeviceElement):
         Generate a valid device config.
 
         The config will be used for the quantify-scheduler making use of the
-        :func:`~.circuit_to_device.compile_circuit_to_device` function.
+        :func:`~.circuit_to_device.compile_circuit_to_device_with_config_validation` function.
 
         This enables the settings of this qubit to be used in isolation.
 
