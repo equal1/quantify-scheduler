@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Tuple, Union
 
 import numpy as np
 from zhinst import qcodes
-from zhinst.qcodes import base
+from zhinst.qcodes.driver.devices import base
 
 from quantify_scheduler.helpers import time
 

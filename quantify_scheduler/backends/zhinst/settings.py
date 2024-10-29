@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple, Union, cast
 
 import numpy as np
-from zhinst.qcodes import base
+from zhinst.qcodes.driver.devices import base
 
 from quantify_scheduler.backends.types import zhinst as zi_types
 from quantify_scheduler.backends.zhinst import helpers as zi_helpers
