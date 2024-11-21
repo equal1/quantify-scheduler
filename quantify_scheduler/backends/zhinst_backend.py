@@ -27,7 +27,7 @@ from uuid import uuid4
 
 import numpy as np
 from pydantic import Field, TypeAdapter, model_validator
-from zhinst.toolkit.helpers import Waveform
+from .zhinst.waveform import Waveform
 
 from quantify_scheduler import enums
 from quantify_scheduler.backends.corrections import (
